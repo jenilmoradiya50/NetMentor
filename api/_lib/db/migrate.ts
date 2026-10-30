@@ -3,6 +3,12 @@ import { drizzle } from 'drizzle-orm/neon-http';
 import { migrate } from 'drizzle-orm/neon-http/migrator';
 import path from 'path';
 
+// Automatically load local environment files in development CLI tools
+if (typeof process.loadEnvFile === 'function') {
+  try { process.loadEnvFile('.env.local'); } catch {}
+  try { process.loadEnvFile('.env'); } catch {}
+}
+
 /**
  * Runs Drizzle database migrations against the configured Neon PostgreSQL database.
  */
@@ -10,6 +16,7 @@ async function runMigrations() {
   const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL;
   if (!databaseUrl || databaseUrl.trim().length === 0) {
     console.error('ERROR: DATABASE_URL or POSTGRES_URL environment variable is required to run migrations.');
+    console.error('Please configure DATABASE_URL in your .env.local file or your environment.');
     process.exit(1);
   }
 
