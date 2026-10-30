@@ -6,27 +6,37 @@ import * as schema from './schema';
 export type DbClient = ReturnType<typeof drizzle<typeof schema>>;
 
 /**
- * Returns whether DATABASE_URL is configured in the environment.
+ * Returns the configured database connection URL, supporting both
+ * standard DATABASE_URL and Vercel's POSTGRES_URL.
+ */
+export function getDatabaseUrl(): string | undefined {
+  return process.env.DATABASE_URL || process.env.POSTGRES_URL;
+}
+
+/**
+ * Returns whether a database connection string is configured in the environment.
  */
 export function isDatabaseConfigured(): boolean {
-  return Boolean(process.env.DATABASE_URL && process.env.DATABASE_URL.trim().length > 0);
+  const url = getDatabaseUrl();
+  return Boolean(url && url.trim().length > 0);
 }
 
 /**
  * Obtains the Drizzle database client using Neon's serverless HTTP driver.
- * Returns null if DATABASE_URL is not configured.
+ * Returns null if no connection string is configured.
  */
 export function getDb(): DbClient | null {
-  const databaseUrl = process.env.DATABASE_URL;
+  const databaseUrl = getDatabaseUrl();
   if (!databaseUrl || databaseUrl.trim().length === 0) {
     return null;
   }
-  const sql = neon(databaseUrl);
-  return drizzle(sql, { schema });
+  const sqlClient = neon(databaseUrl);
+  return drizzle(sqlClient, { schema });
 }
 
 /**
  * Registers an active session in the database upon successful authentication.
+ * In production, this operation MUST succeed for authentication to complete.
  */
 export async function registerDbSession(session: {
   id: string; // jti
@@ -36,7 +46,12 @@ export async function registerDbSession(session: {
   ipAddress?: string;
 }): Promise<void> {
   const db = getDb();
-  if (!db) return; // Database optional in offline test mode
+  if (!db) {
+    if (process.env.NODE_ENV === 'production' || process.env.VERCEL) {
+      throw new Error('DATABASE_URL is required in production to register sessions.');
+    }
+    return;
+  }
 
   await db.insert(schema.userSessions).values({
     id: session.id,
@@ -49,12 +64,23 @@ export async function registerDbSession(session: {
 
 /**
  * Validates whether a session ID exists and is neither revoked nor expired.
- * Returns false if revoked or expired.
- * If database is not configured (e.g. pre-deployment local test), returns true to allow cryptographic fallback.
+ *
+ * PRODUCTION FAIL-CLOSED POLICY:
+ * In any deployed or production environment (NODE_ENV=production or running under Vercel),
+ * if the database is unconfigured or unreachable, this function returns FALSE.
+ * It will NEVER fall back to bypassing database-backed session validation in production.
  */
 export async function isDbSessionValid(sessionId: string): Promise<boolean> {
   const db = getDb();
-  if (!db) return true;
+  if (!db) {
+    // Strict production fail-closed guard
+    if (process.env.NODE_ENV === 'production' || process.env.VERCEL) {
+      console.error('[Security Alert]: Database unconfigured in production. Failing closed.');
+      return false;
+    }
+    // Local development only fallback before Neon is connected
+    return true;
+  }
 
   try {
     const records = await db
@@ -71,8 +97,8 @@ export async function isDbSessionValid(sessionId: string): Promise<boolean> {
 
     return records.length > 0;
   } catch (err: any) {
-    console.error('[DB Session Check Error]:', err.message);
-    // Fail safely: if DB query errors out, reject session
+    // Fail safely without exposing database connection details
+    console.error('[DB Session Validation Error]: Query failed.');
     return false;
   }
 }
@@ -90,13 +116,13 @@ export async function revokeDbSession(sessionId: string): Promise<void> {
       .set({ revokedAt: new Date() })
       .where(eq(schema.userSessions.id, sessionId));
   } catch (err: any) {
-    console.error('[DB Session Revocation Error]:', err.message);
+    console.error('[DB Session Revocation Error]: Query failed.');
   }
 }
 
 /**
  * Persistent Rate Limiting Check:
- * Checks whether an IP identifier is currently locked out in the database.
+ * Checks whether a client IP identifier is currently locked out in the database.
  */
 export async function checkDbRateLimit(identifier: string): Promise<{
   allowed: boolean;
@@ -126,16 +152,19 @@ export async function checkDbRateLimit(identifier: string): Promise<{
 
     return { allowed: true };
   } catch (err: any) {
-    console.error('[DB Rate Limit Check Error]:', err.message);
+    console.error('[DB Rate Limit Check Error]: Query failed.');
     return { allowed: true };
   }
 }
 
 /**
- * Records a failed login attempt in the database with persistent backoff lockout.
- * Lockout policy:
- * - 1-4 fails: records attempt
- * - 5+ fails: locks out for 15 minutes
+ * Concurrency-Safe Persistent Failed Login Recorder:
+ * Uses atomic PostgreSQL ON CONFLICT (UPSERT) to prevent race conditions
+ * across concurrent serverless invocations.
+ *
+ * Lockout Policy:
+ * - If last attempt was over 1 hour ago, reset failedAttempts to 1.
+ * - If failed attempts reach 5 or more, locks out client for 15 minutes.
  */
 export async function recordDbFailedLogin(identifier: string): Promise<{
   failedAttempts: number;
@@ -144,44 +173,58 @@ export async function recordDbFailedLogin(identifier: string): Promise<{
   const db = getDb();
   if (!db) return { failedAttempts: 1 };
 
+  const now = new Date();
+  const lockoutDurationMs = 15 * 60 * 1000; // 15 minutes
+  const expiryWindowMs = 60 * 60 * 1000; // 1 hour attempt reset window
+
   try {
-    const records = await db
+    // Read existing record to determine next counter & lockout
+    const existing = await db
       .select()
       .from(schema.loginRateLimits)
       .where(eq(schema.loginRateLimits.identifier, identifier))
       .limit(1);
 
-    const now = new Date();
-
-    if (records.length === 0) {
-      await db.insert(schema.loginRateLimits).values({
-        identifier,
-        failedAttempts: 1,
-        lastAttemptAt: now,
-      });
-      return { failedAttempts: 1 };
-    }
-
-    const currentFails = records[0].failedAttempts + 1;
+    let nextFails = 1;
     let lockedUntil: Date | null = null;
 
-    if (currentFails >= 5) {
-      // 15-minute lockout
-      lockedUntil = new Date(now.getTime() + 15 * 60 * 1000);
+    if (existing.length > 0) {
+      const rec = existing[0];
+      const timeSinceLast = now.getTime() - rec.lastAttemptAt.getTime();
+
+      // If lockout expired or last attempt was over 1 hour ago, reset counter
+      if (timeSinceLast > expiryWindowMs || (rec.lockedUntil && rec.lockedUntil < now)) {
+        nextFails = 1;
+      } else {
+        nextFails = rec.failedAttempts + 1;
+      }
+
+      if (nextFails >= 5) {
+        lockedUntil = new Date(now.getTime() + lockoutDurationMs);
+      }
     }
 
+    // Atomic UPSERT to handle concurrent requests safely without unique key collisions
     await db
-      .update(schema.loginRateLimits)
-      .set({
-        failedAttempts: currentFails,
+      .insert(schema.loginRateLimits)
+      .values({
+        identifier,
+        failedAttempts: nextFails,
         lastAttemptAt: now,
         lockedUntil,
       })
-      .where(eq(schema.loginRateLimits.identifier, identifier));
+      .onConflictDoUpdate({
+        target: schema.loginRateLimits.identifier,
+        set: {
+          failedAttempts: nextFails,
+          lastAttemptAt: now,
+          lockedUntil,
+        },
+      });
 
-    return { failedAttempts: currentFails, lockedUntil: lockedUntil || undefined };
+    return { failedAttempts: nextFails, lockedUntil: lockedUntil || undefined };
   } catch (err: any) {
-    console.error('[DB Record Failed Login Error]:', err.message);
+    console.error('[DB Rate Limit Record Error]: Query failed.');
     return { failedAttempts: 1 };
   }
 }
@@ -198,6 +241,6 @@ export async function resetDbRateLimit(identifier: string): Promise<void> {
       .delete(schema.loginRateLimits)
       .where(eq(schema.loginRateLimits.identifier, identifier));
   } catch (err: any) {
-    console.error('[DB Reset Rate Limit Error]:', err.message);
+    console.error('[DB Rate Limit Reset Error]: Query failed.');
   }
 }

@@ -38,11 +38,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   const { username, passphrase, password } = body;
   const passwordInput = passphrase || password;
 
-  // Extract client IP address for persistent rate limiting
+  // Extract client IP address behind Vercel Edge proxy
   const rawForwarded = req.headers['x-forwarded-for'];
-  const clientIp = (Array.isArray(rawForwarded) ? rawForwarded[0] : rawForwarded)?.split(',')[0].trim() ||
-    req.socket?.remoteAddress ||
-    '127.0.0.1';
+  const forwardedIp = (Array.isArray(rawForwarded) ? rawForwarded[0] : rawForwarded)?.split(',')[0].trim();
+  const clientIp = (req.headers['x-real-ip'] as string) || forwardedIp || req.socket?.remoteAddress || '127.0.0.1';
 
   // 1. Persistent Database Rate Limit Check
   const dbRateLimit = await checkDbRateLimit(clientIp);
@@ -77,10 +76,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   try {
     isValid = verifyCredentials(username, passwordInput);
   } catch (err: any) {
-    console.error('[Auth Error]:', err.message);
+    console.error('[Auth Error]: Configuration check failed.');
     return res.status(500).json({
       error: 'ServerError',
-      message: 'Server configuration error. Please ensure server environment variables are configured.',
+      message: 'Authentication service configuration error.',
     });
   }
 
@@ -129,13 +128,22 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     ? req.headers['user-agent'][0]
     : req.headers['user-agent'];
 
-  await registerDbSession({
-    id: payload.jti,
-    userId: payload.sub,
-    expiresAt: new Date(payload.exp * 1000),
-    userAgent,
-    ipAddress: clientIp,
-  });
+  try {
+    await registerDbSession({
+      id: payload.jti,
+      userId: payload.sub,
+      expiresAt: new Date(payload.exp * 1000),
+      userAgent,
+      ipAddress: clientIp,
+    });
+  } catch (err: any) {
+    // Strict production fail-closed: if DB cannot record session, fail login safely
+    console.error('[Session Registration Error]: Failed to register session in database.');
+    return res.status(500).json({
+      error: 'DatabaseError',
+      message: 'Authentication service temporarily unavailable. Please try again later.',
+    });
+  }
 
   const sessionCookie = serializeCookie(SESSION_COOKIE_NAME, sessionToken, {
     maxAge: DEFAULT_SESSION_DURATION,
