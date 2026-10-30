@@ -3,7 +3,7 @@ import { requireAuth } from '../_lib/auth-guard';
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   // Enforce server-side authentication
-  const session = requireAuth(req, res);
+  const session = await requireAuth(req, res);
   if (!session) {
     return; // Response already sent by requireAuth
   }

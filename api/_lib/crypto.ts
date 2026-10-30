@@ -84,7 +84,7 @@ export function verifyCredentials(inputUser?: string, inputPass?: string): boole
 export function createSignedSessionToken(
   username = getAdminUsername(),
   durationSeconds = DEFAULT_SESSION_DURATION,
-): string {
+): { token: string; payload: SessionPayload } {
   const secret = getSessionSecret();
   const now = Math.floor(Date.now() / 1000);
 
@@ -101,7 +101,10 @@ export function createSignedSessionToken(
   hmac.update(`v1.${payloadB64}`);
   const signatureB64 = hmac.digest('base64url');
 
-  return `v1.${payloadB64}.${signatureB64}`;
+  return {
+    token: `v1.${payloadB64}.${signatureB64}`,
+    payload,
+  };
 }
 
 /**

@@ -1,6 +1,7 @@
 import type { ApiRequest, ApiResponse } from '../_lib/types';
 import { parseCookies } from '../_lib/cookies';
 import { SESSION_COOKIE_NAME, verifySessionToken } from '../_lib/crypto';
+import { isDbSessionValid } from '../_lib/db/client';
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (req.method !== 'GET') {
@@ -23,6 +24,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     return res.status(401).json({
       authenticated: false,
       message: 'Session has expired or is invalid.',
+    });
+  }
+
+  // Persistent database revocation check
+  const isValid = await isDbSessionValid(session.jti);
+  if (!isValid) {
+    return res.status(401).json({
+      authenticated: false,
+      message: 'Session has been revoked or expired.',
     });
   }
 

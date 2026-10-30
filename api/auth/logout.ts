@@ -1,7 +1,8 @@
 import type { ApiRequest, ApiResponse } from '../_lib/types';
-import { serializeExpiredCookie } from '../_lib/cookies';
-import { SESSION_COOKIE_NAME } from '../_lib/crypto';
+import { parseCookies, serializeExpiredCookie } from '../_lib/cookies';
+import { SESSION_COOKIE_NAME, verifySessionToken } from '../_lib/crypto';
 import { validateCsrf } from '../_lib/auth-guard';
+import { revokeDbSession } from '../_lib/db/client';
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (req.method !== 'POST') {
@@ -17,8 +18,19 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     });
   }
 
-  // Clear browser session cookie.
-  // Note: True persistent token revocation will be verified against the Neon DB sessions table.
+  // Extract session token
+  const cookies = req.cookies || parseCookies(req.headers.cookie);
+  const sessionToken = cookies[SESSION_COOKIE_NAME];
+
+  if (sessionToken) {
+    const session = verifySessionToken(sessionToken);
+    if (session?.jti) {
+      // 1. Persistent server-side revocation: mark session revoked in Neon PostgreSQL
+      await revokeDbSession(session.jti);
+    }
+  }
+
+  // 2. Invalidate browser cookie
   const expiredCookie = serializeExpiredCookie(SESSION_COOKIE_NAME, {
     path: '/',
     httpOnly: true,
@@ -29,6 +41,6 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   return res.status(200).json({
     success: true,
-    message: 'Logged out successfully (cookie cleared)',
+    message: 'Logged out successfully (session revoked)',
   });
 }

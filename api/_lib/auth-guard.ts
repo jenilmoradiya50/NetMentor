@@ -1,6 +1,7 @@
 import type { ApiRequest, ApiResponse, SessionPayload } from './types';
 import { parseCookies } from './cookies';
 import { SESSION_COOKIE_NAME, verifySessionToken } from './crypto';
+import { isDbSessionValid } from './db/client';
 
 /**
  * Validates CSRF mitigation on state-changing requests (POST, PUT, DELETE, PATCH).
@@ -38,10 +39,10 @@ export function validateCsrf(req: ApiRequest): boolean {
 
 /**
  * Server-side Authentication Guard.
- * Call this at the start of any protected API route.
- * If authentication fails or is missing, it sends an appropriate 401 response and returns null.
+ * Validates cryptographically signed session token AND checks Neon PostgreSQL
+ * to ensure the session has not been revoked on logout.
  */
-export function requireAuth(req: ApiRequest, res: ApiResponse): SessionPayload | null {
+export async function requireAuth(req: ApiRequest, res: ApiResponse): Promise<SessionPayload | null> {
   // 1. Enforce strict CSRF check for mutations
   if (!validateCsrf(req)) {
     res.status(403).json({
@@ -69,6 +70,16 @@ export function requireAuth(req: ApiRequest, res: ApiResponse): SessionPayload |
     res.status(401).json({
       error: 'Unauthorized',
       message: 'Session has expired or is invalid. Please log in again.',
+    });
+    return null;
+  }
+
+  // 4. Verify persistent revocation status in database
+  const isValid = await isDbSessionValid(session.jti);
+  if (!isValid) {
+    res.status(401).json({
+      error: 'Unauthorized',
+      message: 'Session has been revoked or expired. Please log in again.',
     });
     return null;
   }
