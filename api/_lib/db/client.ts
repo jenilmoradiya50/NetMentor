@@ -34,11 +34,17 @@ export function __setTestMockStore(mock: TestMockStore | null) {
  * 3. process.env.POSTGRES_URL_NON_POOLING
  */
 export function getDatabaseUrl(): string | undefined {
-  return (
-    process.env.DATABASE_URL ||
-    process.env.POSTGRES_URL ||
-    process.env.POSTGRES_URL_NON_POOLING
-  );
+  const candidates = [
+    process.env.DATABASE_URL,
+    process.env.POSTGRES_URL,
+    process.env.POSTGRES_URL_NON_POOLING,
+  ];
+  for (const candidate of candidates) {
+    if (candidate && candidate.trim().length > 0 && !candidate.includes('[SENSITIVE]')) {
+      return candidate.trim();
+    }
+  }
+  return undefined;
 }
 
 /**
