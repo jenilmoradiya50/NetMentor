@@ -1,7 +1,7 @@
-import type { ApiRequest, ApiResponse, SessionPayload, UserRole } from './types';
-import { parseCookies } from './cookies';
-import { SESSION_COOKIE_NAME, verifySessionToken } from './crypto';
-import { validateDbSession } from './db/client';
+import type { ApiRequest, ApiResponse, SessionPayload, UserRole } from './types.js';
+import { parseCookies } from './cookies.js';
+import { SESSION_COOKIE_NAME, verifySessionToken } from './crypto.js';
+import { validateDbSession } from './db/client.js';
 
 /**
  * Validates CSRF mitigation on state-changing requests (POST, PUT, DELETE, PATCH).

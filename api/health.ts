@@ -1,5 +1,5 @@
-import type { ApiRequest, ApiResponse } from './_lib/types';
-import { query } from './_lib/db/client';
+import type { ApiRequest, ApiResponse } from './_lib/types.js';
+import { query } from './_lib/db/client.js';
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   // Only accept GET requests

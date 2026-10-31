@@ -3,14 +3,17 @@ import { authApi } from '../lib/api';
 
 interface AuthContextType {
   isAuthenticated: boolean;
+  isDemoMode: boolean;
   isLoading: boolean;
   user: string | null;
-  role: 'admin' | 'user' | null;
+  role: 'admin' | 'user' | 'demo' | null;
   error: string | null;
   retryAfter: number | null;
   sessionExpiresAt: number | null;
   login: (username: string, passphrase: string) => Promise<boolean>;
   logout: () => Promise<void>;
+  enterDemoMode: () => void;
+  exitDemoMode: () => void;
   clearError: () => void;
 }
 
@@ -18,9 +21,10 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [isDemoMode, setIsDemoMode] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [user, setUser] = useState<string | null>(null);
-  const [role, setRole] = useState<'admin' | 'user' | null>(null);
+  const [role, setRole] = useState<'admin' | 'user' | 'demo' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retryAfter, setRetryAfter] = useState<number | null>(null);
   const [sessionExpiresAt, setSessionExpiresAt] = useState<number | null>(null);
@@ -87,14 +91,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = async () => {
     setIsLoading(true);
     try {
-      await authApi.logout();
+      if (!isDemoMode) {
+        await authApi.logout();
+      }
     } finally {
       setIsAuthenticated(false);
+      setIsDemoMode(false);
       setUser(null);
       setRole(null);
       setSessionExpiresAt(null);
       setIsLoading(false);
     }
+  };
+
+  const enterDemoMode = () => {
+    setIsAuthenticated(true);
+    setIsDemoMode(true);
+    setUser('Demo Student');
+    setRole('demo');
+    setError(null);
+    setSessionExpiresAt(null);
+  };
+
+  const exitDemoMode = () => {
+    setIsAuthenticated(false);
+    setIsDemoMode(false);
+    setUser(null);
+    setRole(null);
+    setError(null);
+    setSessionExpiresAt(null);
   };
 
   const clearError = () => {
@@ -106,6 +131,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     <AuthContext.Provider
       value={{
         isAuthenticated,
+        isDemoMode,
         isLoading,
         user,
         role,
@@ -114,6 +140,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         sessionExpiresAt,
         login,
         logout,
+        enterDemoMode,
+        exitDemoMode,
         clearError,
       }}
     >

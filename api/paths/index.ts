@@ -1,5 +1,5 @@
-import type { ApiRequest, ApiResponse } from '../_lib/types';
-import { requireAuth } from '../_lib/auth-guard';
+import type { ApiRequest, ApiResponse } from '../_lib/types.js';
+import { requireAuth } from '../_lib/auth-guard.js';
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   // Enforce server-side authentication

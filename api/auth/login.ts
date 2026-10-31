@@ -1,5 +1,5 @@
-import type { ApiRequest, ApiResponse, UserRole } from '../_lib/types';
-import { parseCookies, serializeCookie, serializeExpiredCookie } from '../_lib/cookies';
+import type { ApiRequest, ApiResponse, UserRole } from '../_lib/types.js';
+import { parseCookies, serializeCookie, serializeExpiredCookie } from '../_lib/cookies.js';
 import {
   SESSION_COOKIE_NAME,
   BRUTE_FORCE_COOKIE_NAME,
@@ -9,8 +9,8 @@ import {
   parseBruteForceState,
   serializeBruteForceState,
   calculateRequiredBackoffMs,
-} from '../_lib/crypto';
-import { validateCsrf } from '../_lib/auth-guard';
+} from '../_lib/crypto.js';
+import { validateCsrf } from '../_lib/auth-guard.js';
 import {
   checkDbRateLimit,
   recordDbFailedLogin,
@@ -18,8 +18,8 @@ import {
   registerDbSession,
   findUserByUsername,
   updateUserLastLogin,
-} from '../_lib/db/client';
-import { verifyPassword, dummyVerifyPassword } from '../_lib/password';
+} from '../_lib/db/client.js';
+import { verifyPassword, dummyVerifyPassword } from '../_lib/password.js';
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   // Only accept POST

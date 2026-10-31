@@ -3,7 +3,7 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
 const { Pool } = pg;
 import path from 'path';
-import { getDatabaseUrl, inspectConnectionConfig } from './client';
+import { getDatabaseUrl, inspectConnectionConfig } from './client.js';
 
 // Automatically load local environment files in development CLI tools
 if (typeof process.loadEnvFile === 'function') {

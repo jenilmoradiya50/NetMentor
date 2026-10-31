@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { SessionPayload, BruteForceState, UserRole } from './types';
+import type { SessionPayload, BruteForceState, UserRole } from './types.js';
 
 export const SESSION_COOKIE_NAME = 'netmentor_session';
 export const BRUTE_FORCE_COOKIE_NAME = 'netmentor_sec_state';

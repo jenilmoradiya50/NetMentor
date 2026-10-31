@@ -4,8 +4,8 @@ import type { PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { eq, and, gt, isNull, or } from 'drizzle-orm';
 import crypto from 'node:crypto';
-import * as schema from './schema';
-import type { UserRole } from '../types';
+import * as schema from './schema.js';
+import type { UserRole } from '../types.js';
 
 export type DbClient = ReturnType<typeof drizzle<typeof schema>>;
 

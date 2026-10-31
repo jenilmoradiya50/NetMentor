@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import { Lock, User, KeyRound, Eye, EyeOff, ShieldCheck, AlertCircle, Loader2 } from 'lucide-react';
+import { DatabaseStatusBadge } from '../common/DatabaseStatusBadge';
+import { Lock, User, KeyRound, Eye, EyeOff, ShieldCheck, AlertCircle, Loader2, Sparkles } from 'lucide-react';
 
 export function LoginPage() {
-  const { login, isLoading, error, retryAfter, clearError } = useAuth();
+  const { login, enterDemoMode, isLoading, error, retryAfter, clearError } = useAuth();
   const [username, setUsername] = useState('');
   const [passphrase, setPassphrase] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -44,7 +45,7 @@ export function LoginPage() {
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-center items-center px-4 safe-top safe-bottom">
       <div className="w-full max-w-md">
         {/* Brand Header */}
-        <div className="text-center mb-8">
+        <div className="text-center mb-6">
           <div className="inline-flex h-14 w-14 rounded-2xl bg-brand-600/20 border border-brand-500/40 items-center justify-center text-brand-400 mb-4 shadow-xl shadow-brand-500/10">
             <Lock className="w-7 h-7" />
           </div>
@@ -52,6 +53,9 @@ export function LoginPage() {
           <p className="text-sm text-slate-400 mt-1">
             Personal AI Networking Learning Application
           </p>
+          <div className="mt-3 flex justify-center">
+            <DatabaseStatusBadge />
+          </div>
         </div>
 
         {/* Login Card */}
@@ -157,6 +161,25 @@ export function LoginPage() {
               )}
             </button>
           </form>
+
+          {/* Temporary Testing Demo Mode */}
+          <div className="relative my-4">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-slate-800" />
+            </div>
+            <div className="relative flex justify-center text-[10px] uppercase tracking-wider">
+              <span className="bg-slate-900 px-2 text-slate-500">UI Evaluation</span>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={enterDemoMode}
+            className="w-full py-2.5 px-4 bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 hover:border-amber-500/40 text-slate-200 hover:text-amber-300 font-medium text-xs rounded-xl transition-all flex items-center justify-center gap-2 group shadow-sm"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-400 group-hover:rotate-12 transition-transform" />
+            <span>Explore in Demo Mode (Synthetic Data)</span>
+          </button>
 
           <div className="mt-6 pt-4 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400">
             <span className="flex items-center gap-1.5 text-emerald-400/90">

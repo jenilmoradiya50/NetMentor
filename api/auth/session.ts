@@ -1,7 +1,7 @@
-import type { ApiRequest, ApiResponse } from '../_lib/types';
-import { parseCookies } from '../_lib/cookies';
-import { SESSION_COOKIE_NAME, verifySessionToken } from '../_lib/crypto';
-import { validateDbSession } from '../_lib/db/client';
+import type { ApiRequest, ApiResponse } from '../_lib/types.js';
+import { parseCookies } from '../_lib/cookies.js';
+import { SESSION_COOKIE_NAME, verifySessionToken } from '../_lib/crypto.js';
+import { validateDbSession } from '../_lib/db/client.js';
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (req.method !== 'GET') {

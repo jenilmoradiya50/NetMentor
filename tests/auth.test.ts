@@ -461,11 +461,21 @@ async function runTests() {
   assert(initResult.publicTables.includes('user_sessions'), 'initDatabase must list user_sessions');
   console.log('   ✓ initDatabase() verified: inspects public schema without modifying DDL.');
 
+  // 16. Testing Demo Mode Security & Boundary Isolation
+  console.log('\n16. Testing Demo Mode Isolation & Boundary:');
+  // Attempt to access protected endpoint without real session cookie while simulating demo client
+  const unauthPathReq = createMockHttp({ method: 'GET' });
+  // The server-side route guard must reject unauthenticated requests regardless of any demo UI state
+  const guardResult = await requireAuth(unauthPathReq.req, unauthPathReq.res);
+  assert(guardResult === null, 'Server route guard must reject requests without valid HttpOnly session');
+  assert(unauthPathReq.getStatus() === 401, 'Unauthenticated request must receive 401 Unauthorized');
+  console.log('   ✓ Demo mode boundary verified: server strictly guards backend APIs against bypass.');
+
   // Reset mock store
   client.__setTestMockStore(null);
 
   console.log('\n====================================================');
-  console.log('✓ ALL 15 DATABASE & AUTH TEST SUITES PASSED CLEANLY!');
+  console.log('✓ ALL 16 DATABASE & AUTH TEST SUITES PASSED CLEANLY!');
   console.log('====================================================\n');
 }
 

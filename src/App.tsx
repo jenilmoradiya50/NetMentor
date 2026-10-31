@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LoginPage } from './components/auth/LoginPage';
+import { DatabaseStatusBadge } from './components/common/DatabaseStatusBadge';
 import { authApi } from './lib/api';
 import type { LearningPath } from './types';
 import {
@@ -14,10 +15,41 @@ import {
   Loader2,
   Clock,
   RefreshCw,
+  Sparkles,
 } from 'lucide-react';
 
+const SYNTHETIC_PATHS: LearningPath[] = [
+  {
+    id: 'demo-fund',
+    slug: 'network-fundamentals',
+    title: 'Network Fundamentals (Demo)',
+    description: 'OSI & TCP/IP models, IPv4/IPv6 addressing, subnetting, and switching fundamentals.',
+    targetCert: 'Fundamentals',
+    orderIndex: 1,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'demo-ccna',
+    slug: 'ccna-200-301',
+    title: 'CCNA: Routing, Switching & Security (Demo)',
+    description: 'VLANs, Trunking, STP, EtherChannel, OSPFv2, NAT, ACLs, and wireless LAN architecture.',
+    targetCert: 'CCNA',
+    orderIndex: 2,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'demo-encor',
+    slug: 'ccnp-encor',
+    title: 'CCNP: Enterprise Core & Architecture (Demo)',
+    description: 'BGP path vector routing, SD-WAN overlay fabrics, QoS, and Python network automation.',
+    targetCert: 'CCNP Enterprise',
+    orderIndex: 3,
+    createdAt: new Date().toISOString(),
+  },
+];
+
 function Dashboard() {
-  const { logout, user, sessionExpiresAt } = useAuth();
+  const { logout, isDemoMode, exitDemoMode, user, sessionExpiresAt } = useAuth();
   const [paths, setPaths] = useState<LearningPath[]>([]);
   const [selectedPath, setSelectedPath] = useState<string>('');
   const [loadingPaths, setLoadingPaths] = useState<boolean>(true);
@@ -26,6 +58,16 @@ function Dashboard() {
   const loadProtectedData = async () => {
     setLoadingPaths(true);
     setFetchError(null);
+
+    if (isDemoMode) {
+      setPaths(SYNTHETIC_PATHS);
+      if (!selectedPath) {
+        setSelectedPath(SYNTHETIC_PATHS[0].id);
+      }
+      setLoadingPaths(false);
+      return;
+    }
+
     const res = await authApi.getPaths();
     if (res.data?.paths) {
       setPaths(res.data.paths);
@@ -40,7 +82,7 @@ function Dashboard() {
 
   useEffect(() => {
     loadProtectedData();
-  }, []);
+  }, [isDemoMode]);
 
   const formatExpiresAt = (expSeconds: number | null) => {
     if (!expSeconds) return 'Active';
@@ -55,6 +97,22 @@ function Dashboard() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+      {/* Demo Mode Alert Banner */}
+      {isDemoMode && (
+        <div className="bg-amber-950/90 border-b border-amber-800/80 px-4 py-2 text-center text-xs text-amber-200 flex flex-wrap items-center justify-center gap-2 shadow-inner">
+          <Sparkles className="w-4 h-4 text-amber-400 flex-shrink-0 animate-pulse" />
+          <span>
+            <strong>DEMO MODE ACTIVE:</strong> Exploring synthetic curriculum data for UI evaluation. Real database authentication is bypassed. Administrative controls are disabled.
+          </span>
+          <button
+            onClick={exitDemoMode}
+            className="ml-2 px-2.5 py-0.5 rounded-md bg-amber-900 hover:bg-amber-800 text-amber-100 border border-amber-700 text-[11px] font-semibold transition-colors shadow-sm"
+          >
+            Exit Demo Mode
+          </button>
+        </div>
+      )}
+
       {/* Top Header */}
       <header className="border-b border-slate-800 bg-slate-900/70 backdrop-blur sticky top-0 z-20 safe-top">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
@@ -65,9 +123,15 @@ function Dashboard() {
             <div>
               <h1 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
                 NetMentor
-                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-brand-950 text-brand-300 border border-brand-800/60">
-                  Protected Session
-                </span>
+                {isDemoMode ? (
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800/80">
+                    Demo Mode (Synthetic Data)
+                  </span>
+                ) : (
+                  <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-brand-950 text-brand-300 border border-brand-800/60">
+                    Protected Session
+                  </span>
+                )}
               </h1>
               <p className="text-xs text-slate-400 hidden sm:block">
                 AI-Powered Networking Mastery & Interview Preparation
@@ -75,26 +139,37 @@ function Dashboard() {
             </div>
           </div>
 
-          {/* Session info & Logout */}
-          <div className="flex items-center gap-3">
-            <div className="hidden md:flex items-center gap-2 text-xs px-2.5 py-1 rounded-md bg-emerald-950/60 text-emerald-400 border border-emerald-800/40">
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>User: <strong className="font-semibold text-slate-100">{user || 'jenilmoradiya50'}</strong></span>
-              {sessionExpiresAt && (
-                <span className="text-slate-400 border-l border-emerald-800/60 pl-2 flex items-center gap-1">
-                  <Clock className="w-3 h-3" />
-                  Exp: {formatExpiresAt(sessionExpiresAt)}
-                </span>
-              )}
+          {/* Database status, Session info & Logout */}
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className="hidden sm:block">
+              <DatabaseStatusBadge showLatency={true} />
             </div>
 
+            {isDemoMode ? (
+              <div className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md bg-amber-950/60 text-amber-300 border border-amber-800/50">
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                <span className="font-medium">Demo Mode</span>
+              </div>
+            ) : (
+              <div className="hidden md:flex items-center gap-2 text-xs px-2.5 py-1 rounded-md bg-emerald-950/60 text-emerald-400 border border-emerald-800/40">
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>User: <strong className="font-semibold text-slate-100">{user || 'jenilmoradiya50'}</strong></span>
+                {sessionExpiresAt && (
+                  <span className="text-slate-400 border-l border-emerald-800/60 pl-2 flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    Exp: {formatExpiresAt(sessionExpiresAt)}
+                  </span>
+                )}
+              </div>
+            )}
+
             <button
-              onClick={() => logout()}
+              onClick={() => (isDemoMode ? exitDemoMode() : logout())}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-rose-950/80 hover:text-rose-300 hover:border-rose-800/50 border border-slate-700 text-slate-200 transition-all shadow-sm"
-              title="Sign Out of NetMentor"
+              title={isDemoMode ? 'Exit Demo Mode' : 'Sign Out of NetMentor'}
             >
               <LogOut className="w-3.5 h-3.5" />
-              <span>Sign Out</span>
+              <span>{isDemoMode ? 'Exit Demo' : 'Sign Out'}</span>
             </button>
           </div>
         </div>
@@ -161,29 +236,44 @@ function Dashboard() {
           <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/40">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2.5 flex items-center gap-2">
               <Cpu className="w-4 h-4 text-brand-400" />
-              Phase 3 Security Status
+              Runtime Security Status
             </h3>
             <ul className="text-xs space-y-2 text-slate-300">
-              <li className="flex items-center gap-2 text-emerald-400">
-                <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
-                HttpOnly signed session cookie
-              </li>
-              <li className="flex items-center gap-2 text-emerald-400">
-                <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
-                Server-side API route guard active
-              </li>
-              <li className="flex items-center gap-2 text-emerald-400">
-                <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
-                Serverless brute-force backoff protection
-              </li>
-              <li className="flex items-center gap-2 text-emerald-400">
-                <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
-                Anti-CSRF custom header validation
-              </li>
-              <li className="flex items-center gap-2 text-slate-400">
-                <span className="w-3.5 h-3.5 rounded-full border border-slate-600 inline-block flex-shrink-0" />
-                Neon DB & Drizzle schema (Phase 4)
-              </li>
+              {isDemoMode ? (
+                <>
+                  <li className="flex items-center gap-2 text-amber-400">
+                    <Sparkles className="w-3.5 h-3.5 flex-shrink-0" />
+                    Demo Mode Active (Synthetic Curriculum)
+                  </li>
+                  <li className="flex items-center gap-2 text-slate-400">
+                    <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0 text-slate-500" />
+                    No real database queries performed
+                  </li>
+                  <li className="flex items-center gap-2 text-slate-400">
+                    <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0 text-slate-500" />
+                    Administrative APIs restricted
+                  </li>
+                </>
+              ) : (
+                <>
+                  <li className="flex items-center gap-2 text-emerald-400">
+                    <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+                    HttpOnly signed session cookie
+                  </li>
+                  <li className="flex items-center gap-2 text-emerald-400">
+                    <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+                    Server-side API route guard active
+                  </li>
+                  <li className="flex items-center gap-2 text-emerald-400">
+                    <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+                    Argon2id live database auth
+                  </li>
+                  <li className="flex items-center gap-2 text-emerald-400">
+                    <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+                    Anti-CSRF custom header validation
+                  </li>
+                </>
+              )}
             </ul>
           </div>
         </section>

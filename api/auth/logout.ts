@@ -1,8 +1,8 @@
-import type { ApiRequest, ApiResponse } from '../_lib/types';
-import { parseCookies, serializeExpiredCookie } from '../_lib/cookies';
-import { SESSION_COOKIE_NAME, verifySessionToken } from '../_lib/crypto';
-import { validateCsrf } from '../_lib/auth-guard';
-import { revokeDbSession } from '../_lib/db/client';
+import type { ApiRequest, ApiResponse } from '../_lib/types.js';
+import { parseCookies, serializeExpiredCookie } from '../_lib/cookies.js';
+import { SESSION_COOKIE_NAME, verifySessionToken } from '../_lib/crypto.js';
+import { validateCsrf } from '../_lib/auth-guard.js';
+import { revokeDbSession } from '../_lib/db/client.js';
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (req.method !== 'POST') {
