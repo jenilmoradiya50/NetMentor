@@ -26,6 +26,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     try {
       const checkRes = await query(`
         SELECT 
+          current_database() as db_name,
           EXISTS (
             SELECT FROM information_schema.tables 
             WHERE table_schema = 'public' AND table_name = 'users'
@@ -35,8 +36,12 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
             WHERE table_schema = 'drizzle' AND table_name = '__drizzle_migrations'
           ) as has_migrations;
       `);
-      schemaReady = Boolean(checkRes?.rows[0]?.has_users && checkRes?.rows[0]?.has_migrations);
-    } catch {}
+      const row = checkRes?.rows[0];
+      schemaReady = Boolean(row?.has_users && row?.has_migrations);
+      console.log(`[Health Diagnostic]: db=${row?.db_name}, has_users=${row?.has_users}, has_migrations=${row?.has_migrations}`);
+    } catch (err: any) {
+      console.error('[Health Diagnostic Error]:', err?.message);
+    }
 
     return res.status(200).json({
       connected: true,

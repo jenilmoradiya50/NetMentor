@@ -398,7 +398,7 @@ export async function findUserByUsername(
 
     return records[0] || null;
   } catch (err: any) {
-    console.error('[DB User Lookup Error]: Query failed.');
+    console.error('[DB User Lookup Error]: Query failed:', err?.message);
     throw err;
   }
 }
@@ -518,7 +518,7 @@ export async function checkDbRateLimit(identifier: string): Promise<{
 
     return { allowed: true };
   } catch (err: any) {
-    console.error('[DB Rate Limit Check Error]: Query failed.');
+    console.error('[DB Rate Limit Check Error]: Query failed:', err?.message);
     return { allowed: true };
   }
 }
