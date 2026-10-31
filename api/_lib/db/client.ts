@@ -137,9 +137,6 @@ export function getPool(): pg.Pool | null {
     idleTimeoutMillis: config.idleTimeoutMillis,
     connectionTimeoutMillis: config.connectionTimeoutMillis,
     ssl: config.ssl,
-    // Explicitly pin connection sessions to 'public' schema at the PostgreSQL protocol level,
-    // completely isolating NetMentor tables from managed schemas like neon_auth
-    options: '-c search_path=public',
   });
 
   // Catch socket resets on idle pool connections without crashing process

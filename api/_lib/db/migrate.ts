@@ -32,7 +32,6 @@ async function runMigrations() {
     max: 1,
     connectionTimeoutMillis: 15000,
     ssl: config.ssl,
-    options: '-c search_path=public',
   });
 
   pool.on('error', (err) => {
