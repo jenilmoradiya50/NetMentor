@@ -12,9 +12,11 @@ export interface ApiResponse extends ServerResponse {
   setHeader: (name: string, value: string | string[]) => this;
 }
 
+export type UserRole = 'admin' | 'user';
+
 export interface SessionPayload {
-  sub: string; // 'admin'
-  role: 'admin';
+  sub: string; // username
+  role: UserRole;
   iat: number; // Issued at timestamp (seconds)
   exp: number; // Expiration timestamp (seconds)
   jti: string; // Unique token identifier (cryptographic nonce)

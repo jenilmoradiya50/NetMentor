@@ -6,13 +6,16 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test": "tsx tests/auth.test.ts",
     "preview": "vite preview",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
-    "db:migrate": "node --experimental-strip-types api/_lib/db/migrate.ts"
+    "db:migrate": "node --experimental-strip-types api/_lib/db/migrate.ts",
+    "db:seed:user": "node --experimental-strip-types scripts/seed-user.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.0",
+    "@node-rs/argon2": "^2.2.2",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.4",
     "lucide-react": "^1.16.0",
@@ -29,6 +32,7 @@
     "drizzle-kit": "^0.31.11",
     "postcss": "^8.5.1",
     "tailwindcss": "^3.4.17",
+    "tsx": "^4.23.15",
     "typescript": "^5.7.3",
     "vite": "^6.1.0"
   }

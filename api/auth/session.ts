@@ -1,7 +1,7 @@
 import type { ApiRequest, ApiResponse } from '../_lib/types';
 import { parseCookies } from '../_lib/cookies';
 import { SESSION_COOKIE_NAME, verifySessionToken } from '../_lib/crypto';
-import { isDbSessionValid } from '../_lib/db/client';
+import { validateDbSession } from '../_lib/db/client';
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (req.method !== 'GET') {
@@ -27,19 +27,27 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     });
   }
 
-  // Persistent database revocation check
-  const isValid = await isDbSessionValid(session.jti);
-  if (!isValid) {
+  // Persistent database revocation, account suspension, and live role check
+  const validation = await validateDbSession(session.jti);
+  if (!validation.valid) {
+    if (validation.userStatus === 'suspended') {
+      return res.status(403).json({
+        authenticated: false,
+        message: 'Account has been suspended. Please contact administration.',
+      });
+    }
     return res.status(401).json({
       authenticated: false,
       message: 'Session has been revoked or expired.',
     });
   }
 
+  const effectiveRole = validation.currentRole || session.role;
+
   return res.status(200).json({
     authenticated: true,
     user: session.sub,
-    role: session.role,
+    role: effectiveRole,
     expiresAt: session.exp,
   });
 }

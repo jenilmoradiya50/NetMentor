@@ -1,7 +1,7 @@
-import type { ApiRequest, ApiResponse, SessionPayload } from './types';
+import type { ApiRequest, ApiResponse, SessionPayload, UserRole } from './types';
 import { parseCookies } from './cookies';
 import { SESSION_COOKIE_NAME, verifySessionToken } from './crypto';
-import { isDbSessionValid } from './db/client';
+import { validateDbSession } from './db/client';
 
 /**
  * Validates CSRF mitigation on state-changing requests (POST, PUT, DELETE, PATCH).
@@ -38,11 +38,18 @@ export function validateCsrf(req: ApiRequest): boolean {
 }
 
 /**
- * Server-side Authentication Guard.
- * Validates cryptographically signed session token AND checks Neon PostgreSQL
- * to ensure the session has not been revoked on logout.
+ * Server-side Authentication & Authorization Guard.
+ * Validates cryptographically signed session token AND verifies with Neon PostgreSQL:
+ * - Checks persistent session revocation.
+ * - Confirms user account is active (suspended users lose access immediately).
+ * - Dynamically updates session with current database role, preventing stale privileges.
+ * - Enforces requiredRole if specified (e.g. 'admin').
  */
-export async function requireAuth(req: ApiRequest, res: ApiResponse): Promise<SessionPayload | null> {
+export async function requireAuth(
+  req: ApiRequest,
+  res: ApiResponse,
+  requiredRole?: UserRole,
+): Promise<SessionPayload | null> {
   // 1. Enforce strict CSRF check for mutations
   if (!validateCsrf(req)) {
     res.status(403).json({
@@ -74,12 +81,33 @@ export async function requireAuth(req: ApiRequest, res: ApiResponse): Promise<Se
     return null;
   }
 
-  // 4. Verify persistent revocation status in database
-  const isValid = await isDbSessionValid(session.jti);
-  if (!isValid) {
+  // 4. Verify persistent revocation status, account status, and live role in database
+  const validation = await validateDbSession(session.jti);
+  if (!validation.valid) {
+    if (validation.userStatus === 'suspended') {
+      res.status(403).json({
+        error: 'Forbidden',
+        message: 'Account has been suspended. Please contact administration.',
+      });
+      return null;
+    }
     res.status(401).json({
       error: 'Unauthorized',
       message: 'Session has been revoked or expired. Please log in again.',
+    });
+    return null;
+  }
+
+  // 5. Apply live role from database to prevent stale privilege retention
+  if (validation.currentRole) {
+    session.role = validation.currentRole;
+  }
+
+  // 6. Enforce role-based access control if an endpoint requires a specific role
+  if (requiredRole && session.role !== requiredRole) {
+    res.status(403).json({
+      error: 'Forbidden',
+      message: `Access denied: Requires ${requiredRole} privileges.`,
     });
     return null;
   }

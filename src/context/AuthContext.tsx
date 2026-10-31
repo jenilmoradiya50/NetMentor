@@ -5,6 +5,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   user: string | null;
+  role: 'admin' | 'user' | null;
   error: string | null;
   retryAfter: number | null;
   sessionExpiresAt: number | null;
@@ -19,6 +20,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [user, setUser] = useState<string | null>(null);
+  const [role, setRole] = useState<'admin' | 'user' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retryAfter, setRetryAfter] = useState<number | null>(null);
   const [sessionExpiresAt, setSessionExpiresAt] = useState<number | null>(null);
@@ -31,15 +33,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (res.data?.authenticated) {
         setIsAuthenticated(true);
         setUser(res.data.user || 'admin');
+        setRole((res.data.role as 'admin' | 'user') || null);
         setSessionExpiresAt(res.data.expiresAt || null);
       } else {
         setIsAuthenticated(false);
         setUser(null);
+        setRole(null);
         setSessionExpiresAt(null);
       }
     } catch {
       setIsAuthenticated(false);
       setUser(null);
+      setRole(null);
     } finally {
       setIsLoading(false);
     }
@@ -59,6 +64,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (res.data?.success) {
       setIsAuthenticated(true);
       setUser(res.data.user || username);
+      setRole((res.data.role as 'admin' | 'user') || null);
       setError(null);
       setIsLoading(false);
       await checkExistingSession();
@@ -67,6 +73,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     setIsAuthenticated(false);
     setUser(null);
+    setRole(null);
     setIsLoading(false);
     setError(res.message || 'Login failed');
 
@@ -84,6 +91,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setIsAuthenticated(false);
       setUser(null);
+      setRole(null);
       setSessionExpiresAt(null);
       setIsLoading(false);
     }
@@ -100,6 +108,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isAuthenticated,
         isLoading,
         user,
+        role,
         error,
         retryAfter,
         sessionExpiresAt,

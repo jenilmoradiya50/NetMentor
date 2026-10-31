@@ -1,9 +1,24 @@
 import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
-import { eq, and, gt, isNull } from 'drizzle-orm';
+import { eq, and, gt, isNull, or } from 'drizzle-orm';
+import crypto from 'node:crypto';
 import * as schema from './schema';
+import type { UserRole } from '../types';
 
 export type DbClient = ReturnType<typeof drizzle<typeof schema>>;
+
+interface TestMockStore {
+  findUserByUsername?: (username: string) => Promise<any>;
+  registerDbSession?: (session: any) => Promise<void>;
+  validateDbSession?: (sessionId: string) => Promise<any>;
+  revokeDbSession?: (sessionId: string) => Promise<void>;
+}
+
+let activeTestMockStore: TestMockStore | null = null;
+
+export function __setTestMockStore(mock: TestMockStore | null) {
+  activeTestMockStore = mock;
+}
 
 /**
  * Returns the configured database connection URL, supporting both
@@ -45,6 +60,10 @@ export async function registerDbSession(session: {
   userAgent?: string;
   ipAddress?: string;
 }): Promise<void> {
+  if (activeTestMockStore?.registerDbSession) {
+    return activeTestMockStore.registerDbSession(session);
+  }
+
   const db = getDb();
   if (!db) {
     if (process.env.NODE_ENV === 'production' || process.env.VERCEL) {
@@ -62,29 +81,46 @@ export async function registerDbSession(session: {
   });
 }
 
+export interface SessionValidationResult {
+  valid: boolean;
+  currentRole?: UserRole;
+  userStatus?: string;
+  userId?: string;
+}
+
 /**
- * Validates whether a session ID exists and is neither revoked nor expired.
+ * Validates whether a session ID exists, is neither revoked nor expired,
+ * AND confirms that the corresponding user account is active.
+ * If the user's role was changed or demoted in the database, returns the current role.
+ * If the user's status is suspended, invalidates access immediately.
  *
  * PRODUCTION FAIL-CLOSED POLICY:
  * In any deployed or production environment (NODE_ENV=production or running under Vercel),
- * if the database is unconfigured or unreachable, this function returns FALSE.
- * It will NEVER fall back to bypassing database-backed session validation in production.
+ * if the database is unconfigured or unreachable, this function returns valid: false.
  */
-export async function isDbSessionValid(sessionId: string): Promise<boolean> {
+export async function validateDbSession(sessionId: string): Promise<SessionValidationResult> {
+  if (activeTestMockStore?.validateDbSession) {
+    return activeTestMockStore.validateDbSession(sessionId);
+  }
+
   const db = getDb();
   if (!db) {
-    // Strict production fail-closed guard
     if (process.env.NODE_ENV === 'production' || process.env.VERCEL) {
       console.error('[Security Alert]: Database unconfigured in production. Failing closed.');
-      return false;
+      return { valid: false };
     }
     // Local development only fallback before Neon is connected
-    return true;
+    return { valid: true, currentRole: 'admin', userStatus: 'active' };
   }
 
   try {
     const records = await db
-      .select({ id: schema.userSessions.id })
+      .select({
+        id: schema.userSessions.id,
+        userId: schema.userSessions.userId,
+        expiresAt: schema.userSessions.expiresAt,
+        revokedAt: schema.userSessions.revokedAt,
+      })
       .from(schema.userSessions)
       .where(
         and(
@@ -95,18 +131,167 @@ export async function isDbSessionValid(sessionId: string): Promise<boolean> {
       )
       .limit(1);
 
-    return records.length > 0;
+    if (records.length === 0) {
+      return { valid: false };
+    }
+
+    const sessionRecord = records[0];
+
+    // Check account status and role from users table
+    const userRecords = await db
+      .select({
+        id: schema.users.id,
+        username: schema.users.username,
+        role: schema.users.role,
+        status: schema.users.status,
+      })
+      .from(schema.users)
+      .where(
+        or(
+          eq(schema.users.id, sessionRecord.userId),
+          eq(schema.users.username, sessionRecord.userId),
+        ),
+      )
+      .limit(1);
+
+    if (userRecords.length > 0) {
+      const user = userRecords[0];
+      // If user account is suspended or not active, revoke session privilege immediately
+      if (user.status !== 'active') {
+        return { valid: false, userStatus: user.status };
+      }
+      return {
+        valid: true,
+        currentRole: (user.role as UserRole) || 'user',
+        userStatus: user.status,
+        userId: user.id,
+      };
+    }
+
+    // Transition fallback: if user record is not in users table (e.g. legacy admin)
+    return {
+      valid: true,
+      currentRole: 'admin',
+      userStatus: 'active',
+      userId: sessionRecord.userId,
+    };
   } catch (err: any) {
-    // Fail safely without exposing database connection details
     console.error('[DB Session Validation Error]: Query failed.');
-    return false;
+    return { valid: false };
   }
+}
+
+/**
+ * Validates whether a session ID exists and is neither revoked nor expired.
+ */
+export async function isDbSessionValid(sessionId: string): Promise<boolean> {
+  const result = await validateDbSession(sessionId);
+  return result.valid;
+}
+
+/**
+ * Looks up a user account by case-insensitive username.
+ */
+export async function findUserByUsername(
+  username: string,
+): Promise<typeof schema.users.$inferSelect | null> {
+  if (activeTestMockStore?.findUserByUsername) {
+    return activeTestMockStore.findUserByUsername(username);
+  }
+
+  const db = getDb();
+  if (!db) {
+    if (process.env.NODE_ENV === 'production' || process.env.VERCEL) {
+      throw new Error('DATABASE_URL is required in production for user authentication.');
+    }
+    return null;
+  }
+
+  try {
+    const trimmed = username.trim().toLowerCase();
+    const records = await db
+      .select()
+      .from(schema.users)
+      .where(eq(schema.users.username, trimmed))
+      .limit(1);
+
+    return records[0] || null;
+  } catch (err: any) {
+    console.error('[DB User Lookup Error]: Query failed.');
+    throw err;
+  }
+}
+
+/**
+ * Updates last_login_at timestamp for an authenticated user.
+ */
+export async function updateUserLastLogin(userId: string): Promise<void> {
+  const db = getDb();
+  if (!db) return;
+
+  try {
+    await db
+      .update(schema.users)
+      .set({ lastLoginAt: new Date() })
+      .where(eq(schema.users.id, userId));
+  } catch (err: any) {
+    console.error('[DB User Login Update Error]: Query failed.');
+  }
+}
+
+/**
+ * Upserts a user account (for admin seeding and management).
+ */
+export async function upsertUser(user: {
+  id?: string;
+  username: string;
+  passwordHash: string;
+  role?: UserRole;
+  status?: 'active' | 'suspended';
+}): Promise<{ id: string; username: string; role: string }> {
+  const db = getDb();
+  if (!db) {
+    throw new Error('Database connection required to create user.');
+  }
+
+  const userId = user.id || crypto.randomUUID();
+  const normalizedUser = user.username.trim().toLowerCase();
+  const role = user.role || 'user';
+  const status = user.status || 'active';
+  const now = new Date();
+
+  await db
+    .insert(schema.users)
+    .values({
+      id: userId,
+      username: normalizedUser,
+      passwordHash: user.passwordHash,
+      role,
+      status,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: schema.users.username,
+      set: {
+        passwordHash: user.passwordHash,
+        role,
+        status,
+        updatedAt: now,
+      },
+    });
+
+  return { id: userId, username: normalizedUser, role };
 }
 
 /**
  * Immediately revokes an active session by marking revokedAt = NOW().
  */
 export async function revokeDbSession(sessionId: string): Promise<void> {
+  if (activeTestMockStore?.revokeDbSession) {
+    return activeTestMockStore.revokeDbSession(sessionId);
+  }
+
   const db = getDb();
   if (!db) return;
 

@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { SessionPayload, BruteForceState } from './types';
+import type { SessionPayload, BruteForceState, UserRole } from './types';
 
 export const SESSION_COOKIE_NAME = 'netmentor_session';
 export const BRUTE_FORCE_COOKIE_NAME = 'netmentor_sec_state';
@@ -83,6 +83,7 @@ export function verifyCredentials(inputUser?: string, inputPass?: string): boole
  */
 export function createSignedSessionToken(
   username = getAdminUsername(),
+  role: UserRole = 'admin',
   durationSeconds = DEFAULT_SESSION_DURATION,
 ): { token: string; payload: SessionPayload } {
   const secret = getSessionSecret();
@@ -90,7 +91,7 @@ export function createSignedSessionToken(
 
   const payload: SessionPayload = {
     sub: username,
-    role: 'admin',
+    role,
     iat: now,
     exp: now + durationSeconds,
     jti: crypto.randomBytes(16).toString('hex'),
@@ -145,7 +146,7 @@ export function verifySessionToken(token?: string): SessionPayload | null {
       return null;
     }
 
-    if (payload.role !== 'admin') {
+    if (payload.role !== 'admin' && payload.role !== 'user') {
       return null;
     }
 

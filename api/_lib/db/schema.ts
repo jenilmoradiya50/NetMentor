@@ -1,6 +1,28 @@
 import { pgTable, varchar, text, timestamp, integer, serial, index } from 'drizzle-orm/pg-core';
 
 /**
+ * 0. users
+ * Database-backed accounts for administrator and standard user authentication.
+ */
+export const users = pgTable(
+  'users',
+  {
+    id: varchar('id', { length: 36 }).primaryKey(),
+    username: varchar('username', { length: 64 }).notNull().unique(),
+    passwordHash: text('password_hash').notNull(),
+    role: varchar('role', { length: 20 }).default('user').notNull(),
+    status: varchar('status', { length: 20 }).default('active').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+    lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+  },
+  (table) => ({
+    usernameIdx: index('users_username_idx').on(table.username),
+    roleIdx: index('users_role_idx').on(table.role),
+  }),
+);
+
+/**
  * 1. user_sessions
  * Tracks active and revoked session tokens.
  * The primary key `id` corresponds directly to the cryptographic token nonce (`jti`).

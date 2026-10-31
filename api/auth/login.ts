@@ -1,4 +1,4 @@
-import type { ApiRequest, ApiResponse } from '../_lib/types';
+import type { ApiRequest, ApiResponse, UserRole } from '../_lib/types';
 import { parseCookies, serializeCookie, serializeExpiredCookie } from '../_lib/cookies';
 import {
   SESSION_COOKIE_NAME,
@@ -16,7 +16,10 @@ import {
   recordDbFailedLogin,
   resetDbRateLimit,
   registerDbSession,
+  findUserByUsername,
+  updateUserLastLogin,
 } from '../_lib/db/client';
+import { verifyPassword, dummyVerifyPassword } from '../_lib/password';
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   // Only accept POST
@@ -71,19 +74,87 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     });
   }
 
-  // 3. Validate username and passphrase
-  let isValid = false;
+  // 3. User Authentication:
+  // Check Neon PostgreSQL `users` table first, with temporary fallback to legacy env admin
+  let authenticatedUser: { id: string; username: string; role: UserRole } | null = null;
+  let isSuspended = false;
+
   try {
-    isValid = verifyCredentials(username, passwordInput);
+    const dbUser = await findUserByUsername(username);
+    if (dbUser) {
+      if (dbUser.status !== 'active') {
+        isSuspended = true;
+      } else {
+        const passwordMatches = await verifyPassword(passwordInput, dbUser.passwordHash);
+        if (passwordMatches) {
+          authenticatedUser = {
+            id: dbUser.id,
+            username: dbUser.username,
+            role: (dbUser.role as UserRole) || 'user',
+          };
+          // Asynchronously update last_login_at
+          updateUserLastLogin(dbUser.id).catch(() => {});
+        }
+      }
+    } else {
+      // User not found in database: check legacy environment fallback (during migration period)
+      const legacyAdminUser = process.env.ADMIN_USERNAME || 'jenilmoradiya50';
+      const hasLegacyPass = Boolean(process.env.ADMIN_PASSPHRASE || process.env.ADMIN_ACCESS_KEY);
+
+      if (hasLegacyPass && username && username.trim().toLowerCase() === legacyAdminUser.toLowerCase()) {
+        try {
+          const legacyValid = verifyCredentials(username, passwordInput);
+          if (legacyValid) {
+            authenticatedUser = {
+              id: legacyAdminUser,
+              username: legacyAdminUser,
+              role: 'admin',
+            };
+          }
+        } catch {
+          // If legacy secret check fails, proceed to rejection
+        }
+      } else {
+        // Run dummy verification to prevent timing attack enumeration
+        await dummyVerifyPassword(passwordInput);
+      }
+    }
   } catch (err: any) {
-    console.error('[Auth Error]: Configuration check failed.');
-    return res.status(500).json({
-      error: 'ServerError',
-      message: 'Authentication service configuration error.',
+    // FAIL CLOSED: If DB fails in production, never bypass authentication
+    if (process.env.NODE_ENV === 'production' || process.env.VERCEL) {
+      console.error('[Auth Error]: Database query failed during authentication. Failing closed.');
+      return res.status(500).json({
+        error: 'ServerError',
+        message: 'Authentication service temporarily unavailable.',
+      });
+    }
+    // Local development fallback only if DB is unconfigured
+    console.warn('[Auth Warning]: Database unconfigured in development. Trying legacy fallback.');
+    try {
+      if (verifyCredentials(username, passwordInput)) {
+        authenticatedUser = {
+          id: username.trim(),
+          username: username.trim(),
+          role: 'admin',
+        };
+      }
+    } catch {
+      return res.status(500).json({
+        error: 'ServerError',
+        message: 'Authentication service configuration error.',
+      });
+    }
+  }
+
+  // Handle suspended accounts
+  if (isSuspended) {
+    return res.status(403).json({
+      error: 'Forbidden',
+      message: 'Account has been suspended. Please contact administration.',
     });
   }
 
-  if (!isValid) {
+  if (!authenticatedUser) {
     // Record persistent failure in database
     await recordDbFailedLogin(clientIp);
 
@@ -117,9 +188,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   // Reset persistent DB rate limit for this IP
   await resetDbRateLimit(clientIp);
 
-  // Issue cryptographically signed session token
+  // Issue cryptographically signed session token with role from database
   const { token: sessionToken, payload } = createSignedSessionToken(
-    username.trim(),
+    authenticatedUser.username,
+    authenticatedUser.role,
     DEFAULT_SESSION_DURATION,
   );
 
@@ -131,7 +203,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   try {
     await registerDbSession({
       id: payload.jti,
-      userId: payload.sub,
+      userId: authenticatedUser.id,
       expiresAt: new Date(payload.exp * 1000),
       userAgent,
       ipAddress: clientIp,
@@ -161,8 +233,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   return res.status(200).json({
     success: true,
     message: 'Authenticated successfully',
-    role: 'admin',
-    user: username.trim(),
+    role: authenticatedUser.role,
+    user: authenticatedUser.username,
     expiresIn: DEFAULT_SESSION_DURATION,
   });
 }

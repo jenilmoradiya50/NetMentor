@@ -8,6 +8,13 @@
       "when": 1793373583355,
       "tag": "0000_aromatic_hobgoblin",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793431192285,
+      "tag": "0001_panoramic_omega_sentinel",
+      "breakpoints": true
     }
   ]
 }

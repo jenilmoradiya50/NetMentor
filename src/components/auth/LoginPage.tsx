@@ -4,7 +4,7 @@ import { Lock, User, KeyRound, Eye, EyeOff, ShieldCheck, AlertCircle, Loader2 } 
 
 export function LoginPage() {
   const { login, isLoading, error, retryAfter, clearError } = useAuth();
-  const [username, setUsername] = useState('jenilmoradiya50');
+  const [username, setUsername] = useState('');
   const [passphrase, setPassphrase] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -59,7 +59,7 @@ export function LoginPage() {
           <div className="flex items-center gap-2 mb-6 pb-4 border-b border-slate-800">
             <KeyRound className="w-4 h-4 text-brand-400" />
             <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-300">
-              Admin Authentication
+              Sign In
             </h2>
           </div>
 
@@ -84,7 +84,7 @@ export function LoginPage() {
                 htmlFor="username"
                 className="block text-xs font-medium text-slate-300 mb-1.5"
               >
-                Admin Username
+                Username
               </label>
               <div className="relative">
                 <input
