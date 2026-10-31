@@ -10,8 +10,8 @@
     "preview": "vite preview",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
-    "db:migrate": "node --experimental-strip-types api/_lib/db/migrate.ts",
-    "db:seed:user": "node --experimental-strip-types scripts/seed-user.ts"
+    "db:migrate": "tsx api/_lib/db/migrate.ts",
+    "db:seed:user": "tsx scripts/seed-user.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.0",
