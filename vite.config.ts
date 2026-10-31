@@ -1,7 +1,23 @@
-import { defineConfig, Plugin } from 'vite';
+import { defineConfig, loadEnv, Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import fs from 'fs';
+
+// Automatically load local environment files into process.env for local development
+if (typeof process.loadEnvFile === 'function') {
+  const envLocalPath = path.resolve(__dirname, '.env.local');
+  if (fs.existsSync(envLocalPath)) {
+    try {
+      process.loadEnvFile(envLocalPath);
+    } catch {}
+  }
+  const envPath = path.resolve(__dirname, '.env');
+  if (fs.existsSync(envPath)) {
+    try {
+      process.loadEnvFile(envPath);
+    } catch {}
+  }
+}
 
 /**
  * Lightweight Vite plugin to emulate Vercel Serverless Functions in local development.
@@ -12,6 +28,15 @@ import fs from 'fs';
 function vercelApiDevPlugin(): Plugin {
   return {
     name: 'vercel-api-dev',
+    config(_config, { mode }) {
+      // Ensure all environment variables from .env and .env.local are populated in process.env
+      const env = loadEnv(mode, process.cwd(), '');
+      for (const [key, val] of Object.entries(env)) {
+        if (process.env[key] === undefined) {
+          process.env[key] = val;
+        }
+      }
+    },
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
         const url = req.url?.split('?')[0];
