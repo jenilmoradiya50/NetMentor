@@ -1,4 +1,4 @@
-import { pgTable, varchar, text, timestamp, integer, serial, index } from 'drizzle-orm/pg-core';
+import { pgTable, varchar, text, timestamp, integer, serial, index, unique } from 'drizzle-orm/pg-core';
 
 /**
  * 0. users
@@ -144,15 +144,17 @@ export const externalReferences = pgTable(
 
 /**
  * 7. user_progress
- * Single-user completion and review state per lesson.
+ * Multi-user completion and review state per lesson.
  */
 export const userProgress = pgTable(
   'user_progress',
   {
     id: varchar('id', { length: 36 }).primaryKey(),
+    userId: varchar('user_id', { length: 36 })
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
     lessonId: varchar('lesson_id', { length: 36 })
       .notNull()
-      .unique()
       .references(() => lessons.id, { onDelete: 'cascade' }),
     masteryLevel: varchar('mastery_level', { length: 20 }).default('not_started').notNull(),
     confidenceScore: integer('confidence_score').default(1).notNull(),
@@ -161,6 +163,8 @@ export const userProgress = pgTable(
     notes: text('notes'),
   },
   (table) => ({
+    userIdIdx: index('user_progress_user_id_idx').on(table.userId),
     lessonIdIdx: index('user_progress_lesson_id_idx').on(table.lessonId),
+    userLessonUnique: unique('user_progress_user_lesson_unique').on(table.userId, table.lessonId),
   }),
 );

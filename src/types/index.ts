@@ -50,6 +50,7 @@ export type MasteryLevel = 'not_started' | 'learning' | 'reviewing' | 'mastered'
 
 export interface UserProgress {
   id: string;
+  userId: string;
   lessonId: string;
   masteryLevel: MasteryLevel;
   confidenceScore: number; // 1-5

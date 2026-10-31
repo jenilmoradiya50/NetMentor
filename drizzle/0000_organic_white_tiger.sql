@@ -51,13 +51,14 @@ CREATE TABLE "topics" (
 --> statement-breakpoint
 CREATE TABLE "user_progress" (
 	"id" varchar(36) PRIMARY KEY NOT NULL,
+	"user_id" varchar(36) NOT NULL,
 	"lesson_id" varchar(36) NOT NULL,
 	"mastery_level" varchar(20) DEFAULT 'not_started' NOT NULL,
 	"confidence_score" integer DEFAULT 1 NOT NULL,
 	"last_reviewed_at" timestamp with time zone,
 	"next_review_at" timestamp with time zone,
 	"notes" text,
-	CONSTRAINT "user_progress_lesson_id_unique" UNIQUE("lesson_id")
+	CONSTRAINT "user_progress_user_lesson_unique" UNIQUE("user_id","lesson_id")
 );
 --> statement-breakpoint
 CREATE TABLE "user_sessions" (
@@ -70,16 +71,32 @@ CREATE TABLE "user_sessions" (
 	"ip_address" varchar(45)
 );
 --> statement-breakpoint
+CREATE TABLE "users" (
+	"id" varchar(36) PRIMARY KEY NOT NULL,
+	"username" varchar(64) NOT NULL,
+	"password_hash" text NOT NULL,
+	"role" varchar(20) DEFAULT 'user' NOT NULL,
+	"status" varchar(20) DEFAULT 'active' NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"last_login_at" timestamp with time zone,
+	CONSTRAINT "users_username_unique" UNIQUE("username")
+);
+--> statement-breakpoint
 ALTER TABLE "external_references" ADD CONSTRAINT "external_references_lesson_id_lessons_id_fk" FOREIGN KEY ("lesson_id") REFERENCES "public"."lessons"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "external_references" ADD CONSTRAINT "external_references_topic_id_topics_id_fk" FOREIGN KEY ("topic_id") REFERENCES "public"."topics"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "lessons" ADD CONSTRAINT "lessons_topic_id_topics_id_fk" FOREIGN KEY ("topic_id") REFERENCES "public"."topics"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "topics" ADD CONSTRAINT "topics_path_id_learning_paths_id_fk" FOREIGN KEY ("path_id") REFERENCES "public"."learning_paths"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "user_progress" ADD CONSTRAINT "user_progress_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "user_progress" ADD CONSTRAINT "user_progress_lesson_id_lessons_id_fk" FOREIGN KEY ("lesson_id") REFERENCES "public"."lessons"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "external_references_lesson_id_idx" ON "external_references" USING btree ("lesson_id");--> statement-breakpoint
 CREATE INDEX "external_references_topic_id_idx" ON "external_references" USING btree ("topic_id");--> statement-breakpoint
 CREATE INDEX "lessons_topic_id_idx" ON "lessons" USING btree ("topic_id");--> statement-breakpoint
 CREATE INDEX "login_rate_limits_identifier_idx" ON "login_rate_limits" USING btree ("identifier");--> statement-breakpoint
 CREATE INDEX "topics_path_id_idx" ON "topics" USING btree ("path_id");--> statement-breakpoint
+CREATE INDEX "user_progress_user_id_idx" ON "user_progress" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "user_progress_lesson_id_idx" ON "user_progress" USING btree ("lesson_id");--> statement-breakpoint
 CREATE INDEX "user_sessions_user_id_idx" ON "user_sessions" USING btree ("user_id");--> statement-breakpoint
-CREATE INDEX "user_sessions_expires_at_idx" ON "user_sessions" USING btree ("expires_at");
+CREATE INDEX "user_sessions_expires_at_idx" ON "user_sessions" USING btree ("expires_at");--> statement-breakpoint
+CREATE INDEX "users_username_idx" ON "users" USING btree ("username");--> statement-breakpoint
+CREATE INDEX "users_role_idx" ON "users" USING btree ("role");

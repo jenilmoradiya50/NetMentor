@@ -1,7 +1,7 @@
 import readline from 'node:readline';
-import { hashPassword } from '../api/_lib/password';
-import { upsertUser, isDatabaseConfigured, getPool } from '../api/_lib/db/client';
-import type { UserRole } from '../api/_lib/types';
+import { hashPassword } from '../api/_lib/password.js';
+import { upsertUser, findUserByUsername, isDatabaseConfigured, getPool } from '../api/_lib/db/client.js';
+import type { UserRole } from '../api/_lib/types.js';
 
 // Automatically load local environment files
 if (typeof process.loadEnvFile === 'function') {
@@ -97,12 +97,29 @@ async function main() {
     process.exit(1);
   }
 
-  // 2. Determine or prompt role
+  // 2. Check if username already exists in database — refuse silent overwrite
+  const existingUser = await findUserByUsername(username);
+  if (existingUser) {
+    console.log(`\n[NOTICE]: Account '${existingUser.username}' already exists in Neon PostgreSQL.`);
+    console.log(`  - Existing Role:   ${existingUser.role}`);
+    console.log(`  - Existing Status: ${existingUser.status}`);
+    const confirmUpdate = await readInput(
+      'Do you want to update this existing account credentials and role? (y/N)',
+      'N'
+    );
+    if (confirmUpdate.toLowerCase() !== 'y' && confirmUpdate.toLowerCase() !== 'yes') {
+      console.log('\nOperation cancelled. Existing account was NOT modified.\n');
+      process.exit(0);
+    }
+    console.log('Confirmation received. Proceeding to update account...\n');
+  }
+
+  // 3. Determine or prompt role
   const defaultRole: UserRole = username.includes('@admin') ? 'admin' : 'user';
   const roleInput = (await readInput('Enter role (admin / user)', defaultRole)).toLowerCase();
   const role: UserRole = roleInput === 'admin' ? 'admin' : 'user';
 
-  // 3. Prompt password with zero echo
+  // 4. Prompt password with zero echo
   const password = await readSecret('Enter password (zero-echo, characters hidden)');
   if (!password || password.length < 8) {
     console.error('ERROR: Password must be at least 8 characters long.');
