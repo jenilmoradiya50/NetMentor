@@ -27,6 +27,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       const checkRes = await query(`
         SELECT 
           current_database() as db_name,
+          current_setting('neon.endpoint_id', true) as ep_id,
           EXISTS (
             SELECT FROM information_schema.tables 
             WHERE table_schema = 'public' AND table_name = 'users'
@@ -38,7 +39,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       `);
       const row = checkRes?.rows[0];
       schemaReady = Boolean(row?.has_users && row?.has_migrations);
-      console.log(`[Health Diagnostic]: db=${row?.db_name}, has_users=${row?.has_users}, has_migrations=${row?.has_migrations}`);
+      console.log(`[Health Diagnostic]: db=${row?.db_name}, ep=${row?.ep_id}, has_users=${row?.has_users}, has_migrations=${row?.has_migrations}`);
     } catch (err: any) {
       console.error('[Health Diagnostic Error]:', err?.message);
     }
