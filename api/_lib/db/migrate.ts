@@ -32,15 +32,11 @@ async function runMigrations() {
     max: 1,
     connectionTimeoutMillis: 15000,
     ssl: config.ssl,
+    options: '-c search_path=public',
   });
 
   pool.on('error', (err) => {
     console.error('[Migration Pool Error]:', err.message);
-  });
-
-  // Ensure migrations are pinned to the public schema
-  pool.on('connect', (client) => {
-    client.query('SET search_path TO public;').catch(() => {});
   });
 
   const db = drizzle(pool);

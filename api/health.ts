@@ -21,10 +21,28 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     await query('SELECT 1;');
     const latencyMs = Math.round(performance.now() - startTime);
 
+    // Read-only schema readiness verification (does not modify database)
+    let schemaReady = false;
+    try {
+      const checkRes = await query(`
+        SELECT 
+          EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_schema = 'public' AND table_name = 'users'
+          ) as has_users,
+          EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_schema = 'drizzle' AND table_name = '__drizzle_migrations'
+          ) as has_migrations;
+      `);
+      schemaReady = Boolean(checkRes?.rows[0]?.has_users && checkRes?.rows[0]?.has_migrations);
+    } catch {}
+
     return res.status(200).json({
       connected: true,
       engine: 'Neon / PostgreSQL',
       latencyMs: latencyMs >= 0 ? latencyMs : 0,
+      schemaReady,
     });
   } catch (err: any) {
     // Log sanitized diagnostic server-side without leaking connection strings or credentials
