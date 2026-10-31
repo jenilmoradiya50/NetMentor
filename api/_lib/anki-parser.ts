@@ -1,6 +1,59 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import crypto from 'node:crypto';
 import JSZip from 'jszip';
 import initSqlJs from 'sql.js';
+
+let cachedSqlPromise: Promise<any> | null = null;
+
+/**
+ * Initializes and caches the SQL.js WebAssembly engine.
+ * Handles both local disk paths and Vercel serverless environments with CDN fallback.
+ */
+export async function getSqlInstance(): Promise<any> {
+  if (cachedSqlPromise) {
+    return cachedSqlPromise;
+  }
+
+  cachedSqlPromise = (async () => {
+    // 1. Check common filesystem locations for sql-wasm.wasm
+    const searchDirs = [
+      process.cwd(),
+      path.join(process.cwd(), 'node_modules/sql.js/dist'),
+      '/var/task/node_modules/sql.js/dist',
+      '/var/task',
+    ];
+
+    let wasmArrayBuffer: ArrayBuffer | undefined;
+
+    for (const dir of searchDirs) {
+      const candidate = path.join(dir, 'sql-wasm.wasm');
+      if (fs.existsSync(candidate)) {
+        try {
+          const buf = fs.readFileSync(candidate);
+          wasmArrayBuffer = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+          break;
+        } catch {}
+      }
+    }
+
+    // 2. If not found on local disk, fetch from reliable CDN as serverless fallback
+    if (!wasmArrayBuffer) {
+      try {
+        const cdnRes = await fetch('https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.15.2/sql-wasm.wasm');
+        if (cdnRes.ok) {
+          wasmArrayBuffer = await cdnRes.arrayBuffer();
+        }
+      } catch (err: any) {
+        console.warn('[SQL.js Warning]: Could not fetch wasm from CDN:', err?.message);
+      }
+    }
+
+    return initSqlJs(wasmArrayBuffer ? { wasmBinary: wasmArrayBuffer } : undefined);
+  })();
+
+  return cachedSqlPromise;
+}
 
 export interface ParsedCard {
   orderIndex: number;
@@ -154,7 +207,7 @@ export async function parseAnkiApkg(
   }
 
   // Initialize SQLite WebAssembly
-  const SQL = await initSqlJs();
+  const SQL = await getSqlInstance();
   const db = new SQL.Database(anki2Bytes);
 
   let deckName = fallbackTitle;
