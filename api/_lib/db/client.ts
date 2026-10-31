@@ -1,5 +1,7 @@
-import { neon } from '@neondatabase/serverless';
-import { drizzle } from 'drizzle-orm/neon-http';
+import pg from 'pg';
+const { Pool } = pg;
+import type { PoolClient, QueryResult, QueryResultRow } from 'pg';
+import { drizzle } from 'drizzle-orm/node-postgres';
 import { eq, and, gt, isNull, or } from 'drizzle-orm';
 import crypto from 'node:crypto';
 import * as schema from './schema';
@@ -7,11 +9,16 @@ import type { UserRole } from '../types';
 
 export type DbClient = ReturnType<typeof drizzle<typeof schema>>;
 
+interface GlobalWithPool {
+  __netmentor_pg_pool?: pg.Pool;
+}
+
 interface TestMockStore {
   findUserByUsername?: (username: string) => Promise<any>;
   registerDbSession?: (session: any) => Promise<void>;
   validateDbSession?: (sessionId: string) => Promise<any>;
   revokeDbSession?: (sessionId: string) => Promise<void>;
+  query?: (text: string, params?: any[]) => Promise<any>;
 }
 
 let activeTestMockStore: TestMockStore | null = null;
@@ -21,11 +28,17 @@ export function __setTestMockStore(mock: TestMockStore | null) {
 }
 
 /**
- * Returns the configured database connection URL, supporting both
- * standard DATABASE_URL and Vercel's POSTGRES_URL.
+ * 1. Connection-string resolution hierarchy:
+ * 1. process.env.DATABASE_URL
+ * 2. process.env.POSTGRES_URL
+ * 3. process.env.POSTGRES_URL_NON_POOLING
  */
 export function getDatabaseUrl(): string | undefined {
-  return process.env.DATABASE_URL || process.env.POSTGRES_URL;
+  return (
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.POSTGRES_URL_NON_POOLING
+  );
 }
 
 /**
@@ -36,17 +49,185 @@ export function isDatabaseConfigured(): boolean {
   return Boolean(url && url.trim().length > 0);
 }
 
+export type ConnectionType = 'neon-pooled' | 'neon-direct-unpooled' | 'standard-unpooled';
+
+export interface PoolInspectionResult {
+  connectionType: ConnectionType;
+  max: number;
+  idleTimeoutMillis: number;
+  connectionTimeoutMillis: number;
+  ssl: boolean | { rejectUnauthorized: boolean };
+}
+
 /**
- * Obtains the Drizzle database client using Neon's serverless HTTP driver.
+ * Inspects the resolved connection URL format and determines the actual connection type
+ * and appropriate pooling configuration without logging secrets or credentials.
+ */
+export function inspectConnectionConfig(connectionString: string): PoolInspectionResult {
+  let connectionType: ConnectionType = 'standard-unpooled';
+  let isNeonPooled = false;
+
+  try {
+    const parsed = new URL(connectionString);
+    const hostname = parsed.hostname.toLowerCase();
+
+    if (hostname.endsWith('.neon.tech')) {
+      // First segment of hostname is the endpoint identifier
+      const endpointSegment = hostname.split('.')[0] || '';
+      if (endpointSegment.endsWith('-pooler')) {
+        isNeonPooled = true;
+        connectionType = 'neon-pooled';
+      } else {
+        connectionType = 'neon-direct-unpooled';
+      }
+    }
+  } catch {
+    // If URL parsing fails, default to most conservative configuration
+    connectionType = 'standard-unpooled';
+  }
+
+  // Determine pool size:
+  // - Confirmed pooled connection: max = 5 (safe under serverless horizontal scaling with Neon PgBouncer)
+  // - Confirmed direct compute connection: max = 1 (preserves Neon compute direct connection limits)
+  // - Unknown / Unidentified connection: max = 1 (conservative safe default)
+  let max = isNeonPooled ? 5 : 1;
+
+  // Allow explicit override if configured by deployment operator
+  if (process.env.DATABASE_POOL_MAX) {
+    const parsedMax = parseInt(process.env.DATABASE_POOL_MAX, 10);
+    if (!isNaN(parsedMax) && parsedMax > 0) {
+      max = parsedMax;
+    }
+  }
+
+  // Determine SSL configuration
+  // Neon requires SSL. Verify certificate authenticity by default; support explicit relaxation if needed.
+  const rejectUnauthorized = process.env.DATABASE_SSL_REJECT_UNAUTHORIZED !== 'false';
+  const ssl = { rejectUnauthorized };
+
+  return {
+    connectionType,
+    max,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000,
+    ssl,
+  };
+}
+
+/**
+ * Obtains or creates the singleton pg.Pool instance cached on globalThis.
+ * Reuses the pool across warm serverless invocations and dev hot-reloads.
+ */
+export function getPool(): pg.Pool | null {
+  const connectionString = getDatabaseUrl();
+  if (!connectionString || connectionString.trim().length === 0) {
+    return null;
+  }
+
+  const globalScope = globalThis as unknown as GlobalWithPool;
+  if (globalScope.__netmentor_pg_pool) {
+    return globalScope.__netmentor_pg_pool;
+  }
+
+  const config = inspectConnectionConfig(connectionString);
+
+  const pool = new Pool({
+    connectionString,
+    max: config.max,
+    idleTimeoutMillis: config.idleTimeoutMillis,
+    connectionTimeoutMillis: config.connectionTimeoutMillis,
+    ssl: config.ssl,
+  });
+
+  // Catch socket resets on idle pool connections without crashing process
+  pool.on('error', (err) => {
+    console.error('[PostgreSQL Pool Error]: Unexpected client error on idle connection:', err.message);
+  });
+
+  // Ensure every client checkout is explicitly pinned to the public schema,
+  // completely isolating NetMentor tables from managed schemas like neon_auth
+  pool.on('connect', (client) => {
+    client.query('SET search_path TO public;').catch(() => {});
+  });
+
+  globalScope.__netmentor_pg_pool = pool;
+  return pool;
+}
+
+/**
+ * Raw reusable database query interface.
+ */
+export async function query<T extends QueryResultRow = any>(
+  text: string,
+  params?: any[],
+): Promise<QueryResult<T>> {
+  if (activeTestMockStore?.query) {
+    return activeTestMockStore.query(text, params);
+  }
+
+  const pool = getPool();
+  if (!pool) {
+    throw new Error('DATABASE_URL is not configured. Cannot execute database query.');
+  }
+
+  return await pool.query<T>(text, params);
+}
+
+/**
+ * Checks out a client directly from the pool for multi-statement transactions.
+ */
+export async function getClient(): Promise<PoolClient> {
+  const pool = getPool();
+  if (!pool) {
+    throw new Error('DATABASE_URL is not configured. Cannot check out database client.');
+  }
+
+  return await pool.connect();
+}
+
+/**
+ * Read-only database initialization & connectivity inspection.
+ * Verifies connection and lists tables in the public schema without modifying DDL.
+ */
+export async function initDatabase(): Promise<{
+  connected: boolean;
+  engine: string;
+  latencyMs: number;
+  publicTables: string[];
+}> {
+  const startTime = performance.now();
+  try {
+    const res = await query<{ table_name: string }>(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name;`
+    );
+    const latencyMs = Math.round(performance.now() - startTime);
+    return {
+      connected: true,
+      engine: 'Neon / PostgreSQL',
+      latencyMs,
+      publicTables: res.rows.map((r) => r.table_name),
+    };
+  } catch {
+    const latencyMs = Math.round(performance.now() - startTime);
+    return {
+      connected: false,
+      engine: 'Neon / PostgreSQL',
+      latencyMs,
+      publicTables: [],
+    };
+  }
+}
+
+/**
+ * Obtains the Drizzle database client using Drizzle's node-postgres adapter.
  * Returns null if no connection string is configured.
  */
 export function getDb(): DbClient | null {
-  const databaseUrl = getDatabaseUrl();
-  if (!databaseUrl || databaseUrl.trim().length === 0) {
+  const pool = getPool();
+  if (!pool) {
     return null;
   }
-  const sqlClient = neon(databaseUrl);
-  return drizzle(sqlClient, { schema });
+  return drizzle(pool, { schema });
 }
 
 /**

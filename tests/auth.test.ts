@@ -9,6 +9,7 @@ import { requireAuth, validateCsrf } from '../api/_lib/auth-guard.ts';
 import loginHandler from '../api/auth/login.ts';
 import sessionHandler from '../api/auth/session.ts';
 import logoutHandler from '../api/auth/logout.ts';
+import healthHandler from '../api/health.ts';
 import type { ApiRequest, ApiResponse, UserRole } from '../api/_lib/types.ts';
 import * as client from '../api/_lib/db/client.ts';
 
@@ -346,8 +347,125 @@ async function runTests() {
   process.env.NODE_ENV = 'development';
   delete process.env.VERCEL;
 
+  // 12. Testing Database Connection String Resolution Order
+  console.log('\n12. Testing Connection String Resolution Hierarchy:');
+  const savedDbUrl = process.env.DATABASE_URL;
+  const savedPgUrl = process.env.POSTGRES_URL;
+  const savedPgUnpooled = process.env.POSTGRES_URL_NON_POOLING;
+
+  // Scenario 1: DATABASE_URL takes priority
+  process.env.DATABASE_URL = 'postgresql://user:pass@ep-db.aws.neon.tech/neondb';
+  process.env.POSTGRES_URL = 'postgresql://user:pass@ep-pg.aws.neon.tech/neondb';
+  process.env.POSTGRES_URL_NON_POOLING = 'postgresql://user:pass@ep-unpooled.aws.neon.tech/neondb';
+  assert(client.getDatabaseUrl() === process.env.DATABASE_URL, 'DATABASE_URL must take precedence');
+
+  // Scenario 2: Falls back to POSTGRES_URL if DATABASE_URL is absent
+  delete process.env.DATABASE_URL;
+  assert(client.getDatabaseUrl() === process.env.POSTGRES_URL, 'Must fall back to POSTGRES_URL');
+
+  // Scenario 3: Falls back to POSTGRES_URL_NON_POOLING if neither above is set
+  delete process.env.POSTGRES_URL;
+  assert(client.getDatabaseUrl() === process.env.POSTGRES_URL_NON_POOLING, 'Must fall back to POSTGRES_URL_NON_POOLING');
+
+  // Scenario 4: All empty returns undefined without throwing
+  delete process.env.POSTGRES_URL_NON_POOLING;
+  assert(client.getDatabaseUrl() === undefined, 'Must return undefined when all are unset');
+  assert(client.isDatabaseConfigured() === false, 'isDatabaseConfigured() must be false');
+
+  // Restore env
+  if (savedDbUrl) process.env.DATABASE_URL = savedDbUrl;
+  if (savedPgUrl) process.env.POSTGRES_URL = savedPgUrl;
+  if (savedPgUnpooled) process.env.POSTGRES_URL_NON_POOLING = savedPgUnpooled;
+  console.log('   ✓ 3-tier connection resolution hierarchy verified.');
+
+  // 13. Testing Deliberate Connection URL Sizing & Inspection Strategy
+  console.log('\n13. Testing Deliberate Connection Inspection:');
+  const pooledNeonUrl = 'postgresql://user:pass@ep-cool-sample-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require';
+  const directNeonUrl = 'postgresql://user:pass@ep-cool-sample.us-east-2.aws.neon.tech/neondb?sslmode=require';
+  const standardUrl = 'postgresql://user:pass@localhost:5432/testdb';
+
+  const pooledConfig = client.inspectConnectionConfig(pooledNeonUrl);
+  assert(pooledConfig.connectionType === 'neon-pooled', 'Must identify neon-pooled type');
+  assert(pooledConfig.max === 5, 'Pooled connection must default to max: 5');
+  assert(typeof pooledConfig.ssl === 'object', 'Must enforce SSL');
+
+  const directConfig = client.inspectConnectionConfig(directNeonUrl);
+  assert(directConfig.connectionType === 'neon-direct-unpooled', 'Must identify direct compute type');
+  assert(directConfig.max === 1, 'Direct unpooled connection must restrict max: 1');
+
+  const standardConfig = client.inspectConnectionConfig(standardUrl);
+  assert(standardConfig.connectionType === 'standard-unpooled', 'Unknown connection defaults to standard');
+  assert(standardConfig.max === 1, 'Unknown connection must use conservative max: 1');
+  console.log('   ✓ Deliberate pool sizing (pooled=5, direct=1, unknown=1) verified.');
+
+  // 14. Testing GET /api/health Endpoint
+  console.log('\n14. Testing Database Health Endpoint (GET /api/health):');
+  // Configure mock query for health endpoint
+  client.__setTestMockStore({
+    query: async (sqlText: string) => {
+      if (sqlText.includes('SELECT 1')) {
+        return { rows: [{ '?column?': 1 }], rowCount: 1 } as any;
+      }
+      return { rows: [], rowCount: 0 } as any;
+    },
+  });
+
+  // Successful GET
+  const healthGetReq = createMockHttp({ method: 'GET' });
+  await healthHandler(healthGetReq.req, healthGetReq.res);
+  assert(healthGetReq.getStatus() === 200, 'Healthy endpoint returns 200 OK');
+  assert(healthGetReq.getData()?.connected === true, 'connected must be true');
+  assert(healthGetReq.getData()?.engine === 'Neon / PostgreSQL', 'engine must match Neon / PostgreSQL');
+  assert(typeof healthGetReq.getData()?.latencyMs === 'number', 'latencyMs must be a number');
+
+  // Rejected Method
+  const healthPostReq = createMockHttp({ method: 'POST' });
+  await healthHandler(healthPostReq.req, healthPostReq.res);
+  assert(healthPostReq.getStatus() === 405, 'Non-GET method must return 405');
+
+  // Simulated Database Error
+  client.__setTestMockStore({
+    query: async () => {
+      throw new Error('Connection terminated unexpectedly');
+    },
+  });
+  const healthFailReq = createMockHttp({ method: 'GET' });
+  await healthHandler(healthFailReq.req, healthFailReq.res);
+  assert(healthFailReq.getStatus() === 503, 'Failed DB query must return 503 Service Unavailable');
+  assert(healthFailReq.getData()?.connected === false, 'connected must be false on failure');
+  assert(!JSON.stringify(healthFailReq.getData()).includes('Connection terminated'), 'Never leak error traces to client');
+  console.log('   ✓ GET /api/health endpoint returns sanitized 200 on success and 503 on failure.');
+
+  // 15. Testing initDatabase() Read-Only Public Schema Inspection
+  console.log('\n15. Testing initDatabase() Schema Inspection:');
+  client.__setTestMockStore({
+    query: async (sqlText: string) => {
+      if (sqlText.includes('information_schema.tables')) {
+        return {
+          rows: [
+            { table_name: 'learning_paths' },
+            { table_name: 'login_rate_limits' },
+            { table_name: 'user_sessions' },
+            { table_name: 'users' },
+          ],
+          rowCount: 4,
+        } as any;
+      }
+      return { rows: [{ '?column?': 1 }], rowCount: 1 } as any;
+    },
+  });
+
+  const initResult = await client.initDatabase();
+  assert(initResult.connected === true, 'initDatabase must report connected: true');
+  assert(initResult.publicTables.includes('users'), 'initDatabase must list public schema tables');
+  assert(initResult.publicTables.includes('user_sessions'), 'initDatabase must list user_sessions');
+  console.log('   ✓ initDatabase() verified: inspects public schema without modifying DDL.');
+
+  // Reset mock store
+  client.__setTestMockStore(null);
+
   console.log('\n====================================================');
-  console.log('✓ ALL 11 AUTHENTICATION TEST SUITES PASSED CLEANLY!');
+  console.log('✓ ALL 15 DATABASE & AUTH TEST SUITES PASSED CLEANLY!');
   console.log('====================================================\n');
 }
 

@@ -1,6 +1,6 @@
 import readline from 'node:readline';
 import { hashPassword } from '../api/_lib/password';
-import { upsertUser, isDatabaseConfigured } from '../api/_lib/db/client';
+import { upsertUser, isDatabaseConfigured, getPool } from '../api/_lib/db/client';
 import type { UserRole } from '../api/_lib/types';
 
 // Automatically load local environment files
@@ -134,7 +134,14 @@ async function main() {
   console.log('\nReady for database-backed authentication.\n');
 }
 
-main().catch((err) => {
-  console.error('\nSeeding failed:', err.message);
-  process.exit(1);
-});
+main()
+  .catch((err) => {
+    console.error('\nSeeding failed:', err.message);
+    process.exit(1);
+  })
+  .finally(async () => {
+    const pool = getPool();
+    if (pool) {
+      await pool.end().catch(() => {});
+    }
+  });

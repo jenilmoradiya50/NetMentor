@@ -1,7 +1,9 @@
-import { neon } from '@neondatabase/serverless';
-import { drizzle } from 'drizzle-orm/neon-http';
-import { migrate } from 'drizzle-orm/neon-http/migrator';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { migrate } from 'drizzle-orm/node-postgres/migrator';
+import pg from 'pg';
+const { Pool } = pg;
 import path from 'path';
+import { getDatabaseUrl, inspectConnectionConfig } from './client';
 
 // Automatically load local environment files in development CLI tools
 if (typeof process.loadEnvFile === 'function') {
@@ -11,28 +13,48 @@ if (typeof process.loadEnvFile === 'function') {
 
 /**
  * Runs Drizzle database migrations against the configured Neon PostgreSQL database.
+ * Targets the 'public' schema explicitly and preserves existing data.
  */
 async function runMigrations() {
-  const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+  const databaseUrl = getDatabaseUrl();
   if (!databaseUrl || databaseUrl.trim().length === 0) {
-    console.error('ERROR: DATABASE_URL or POSTGRES_URL environment variable is required to run migrations.');
-    console.error('Please configure DATABASE_URL in your .env.local file or your environment.');
+    console.error('ERROR: DATABASE_URL, POSTGRES_URL, or POSTGRES_URL_NON_POOLING is required to run migrations.');
+    console.error('Please configure your database connection string in .env.local or your environment.');
     process.exit(1);
   }
 
-  console.log('Connecting to Neon PostgreSQL over serverless HTTP...');
-  const sql = neon(databaseUrl);
-  const db = drizzle(sql);
+  const config = inspectConnectionConfig(databaseUrl);
+  console.log(`Connecting to Neon PostgreSQL via pg driver (Connection type: ${config.connectionType})...`);
 
+  // Migrations run from an isolated single connection pool
+  const pool = new Pool({
+    connectionString: databaseUrl,
+    max: 1,
+    connectionTimeoutMillis: 15000,
+    ssl: config.ssl,
+  });
+
+  pool.on('error', (err) => {
+    console.error('[Migration Pool Error]:', err.message);
+  });
+
+  // Ensure migrations are pinned to the public schema
+  pool.on('connect', (client) => {
+    client.query('SET search_path TO public;').catch(() => {});
+  });
+
+  const db = drizzle(pool);
   const migrationsFolder = path.resolve(process.cwd(), 'drizzle');
-  console.log(`Applying migrations from: ${migrationsFolder}`);
+  console.log(`Applying versioned migrations from: ${migrationsFolder}`);
 
   try {
     await migrate(db, { migrationsFolder });
-    console.log('✓ All migrations applied successfully to Neon PostgreSQL!');
+    console.log('✓ All migrations applied successfully to Neon PostgreSQL (public schema)!');
   } catch (err: any) {
     console.error('Migration failed:', err.message);
     process.exit(1);
+  } finally {
+    await pool.end();
   }
 }
 
