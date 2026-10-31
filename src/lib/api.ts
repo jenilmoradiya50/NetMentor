@@ -85,3 +85,51 @@ export const authApi = {
       method: 'GET',
     }),
 };
+
+export const flashcardsApi = {
+  getCatalog: () =>
+    fetchApi<{ totalDecks: number; decks: any[] }>('/api/flashcards/catalog', {
+      method: 'GET',
+    }),
+
+  getDecks: () =>
+    fetchApi<{ decks: any[] }>('/api/flashcards/decks', {
+      method: 'GET',
+    }),
+
+  getCards: (deckId: string) =>
+    fetchApi<{ deck: any; cards: any[]; totalCards: number }>(`/api/flashcards/cards?deckId=${encodeURIComponent(deckId)}`, {
+      method: 'GET',
+    }),
+
+  preview: (payload: { catalogId?: string; base64Data?: string; filename?: string }) =>
+    fetchApi<{ preview: any }>('/api/flashcards/preview', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  importDeck: (payload: { catalogId?: string; base64Data?: string; filename?: string; customTitle?: string }) =>
+    fetchApi<{ success: boolean; alreadyImported: boolean; deckId: string; title: string; cardCount: number; message: string; warnings?: string[] }>('/api/flashcards/import', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  deleteDeck: (deckId: string) =>
+    fetchApi<{ success: boolean; message: string }>('/api/flashcards/decks', {
+      method: 'DELETE',
+      body: JSON.stringify({ id: deckId }),
+    }),
+
+  updateProgress: (payload: { cardId: string; deckId: string; status: 'new' | 'learning' | 'review' | 'mastered'; confidenceScore?: number }) =>
+    fetchApi<{ success: boolean; progress: any }>('/api/flashcards/progress', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+};
+
+export const labsApi = {
+  getLabs: () =>
+    fetchApi<{ totalLabs: number; softwareRequirement: string; browserExecutionNotice: string; labs: any[] }>('/api/labs', {
+      method: 'GET',
+    }),
+};

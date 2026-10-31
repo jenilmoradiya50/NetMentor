@@ -610,3 +610,256 @@ export async function resetDbRateLimit(identifier: string): Promise<void> {
     console.error('[DB Rate Limit Reset Error]: Query failed.');
   }
 }
+
+/**
+ * Executes a callback within a managed database transaction.
+ * Automatically BEGINs, COMMITs on success, or ROLLBACKs on error.
+ */
+export async function withTransaction<T>(
+  callback: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const result = await callback(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Checks whether an imported deck already exists for a user by source file hash.
+ */
+export async function findImportedDeckByHash(userId: string, sourceHash: string) {
+  const res = await query(
+    `SELECT id, deck_name, title, card_count, created_at 
+     FROM imported_decks 
+     WHERE user_id = $1 AND source_hash = $2 
+     LIMIT 1;`,
+    [userId, sourceHash],
+  );
+  return res.rows[0] || null;
+}
+
+/**
+ * Retrieves all imported decks belonging to a user, with aggregate study progress.
+ */
+export async function getUserImportedDecks(userId: string) {
+  const res = await query(
+    `SELECT 
+       d.id, d.user_id as "userId", d.source_type as "sourceType", 
+       d.source_name as "sourceName", d.source_hash as "sourceHash",
+       d.deck_name as "deckName", d.title, d.description, 
+       d.card_count as "cardCount", d.created_at as "createdAt", d.updated_at as "updatedAt",
+       COUNT(p.id) FILTER (WHERE p.status != 'new')::int as "studiedCount",
+       COUNT(p.id) FILTER (WHERE p.status = 'mastered')::int as "masteredCount",
+       COUNT(p.id) FILTER (WHERE p.status IN ('learning', 'review'))::int as "learningCount"
+     FROM imported_decks d
+     LEFT JOIN flashcard_progress p ON p.deck_id = d.id AND p.user_id = d.user_id
+     WHERE d.user_id = $1
+     GROUP BY d.id
+     ORDER BY d.created_at DESC;`,
+    [userId],
+  );
+  return res.rows;
+}
+
+/**
+ * Retrieves a single imported deck and its ordered cards with user learning progress.
+ */
+export async function getDeckWithCards(userId: string, deckId: string) {
+  const deckRes = await query(
+    `SELECT 
+       id, user_id as "userId", source_type as "sourceType", 
+       source_name as "sourceName", source_hash as "sourceHash",
+       deck_name as "deckName", title, description, 
+       card_count as "cardCount", created_at as "createdAt", updated_at as "updatedAt"
+     FROM imported_decks 
+     WHERE id = $1 AND user_id = $2
+     LIMIT 1;`,
+    [deckId, userId],
+  );
+
+  const deck = deckRes.rows[0];
+  if (!deck) return null;
+
+  const cardsRes = await query(
+    `SELECT 
+       c.id, c.deck_id as "deckId", c.user_id as "userId", c.card_type as "cardType",
+       c.front_markdown as "frontMarkdown", c.back_markdown as "backMarkdown",
+       c.cloze_data as "clozeData", c.tags, c.source_note_id as "sourceNoteId",
+       c.order_index as "orderIndex", c.created_at as "createdAt",
+       p.status as "progressStatus", p.confidence_score as "confidenceScore",
+       p.review_count as "reviewCount", p.last_reviewed_at as "lastReviewedAt"
+     FROM flashcards c
+     LEFT JOIN flashcard_progress p ON p.card_id = c.id AND p.user_id = c.user_id
+     WHERE c.deck_id = $1 AND c.user_id = $2
+     ORDER BY c.order_index ASC;`,
+    [deckId, userId],
+  );
+
+  const cards = cardsRes.rows.map((row: any) => ({
+    id: row.id,
+    deckId: row.deckId,
+    userId: row.userId,
+    cardType: row.cardType,
+    frontMarkdown: row.frontMarkdown,
+    backMarkdown: row.backMarkdown,
+    clozeData: row.clozeData ? (typeof row.clozeData === 'string' ? JSON.parse(row.clozeData) : row.clozeData) : null,
+    tags: row.tags ? (typeof row.tags === 'string' ? JSON.parse(row.tags) : row.tags) : [],
+    orderIndex: row.orderIndex,
+    progress: row.progressStatus
+      ? {
+          status: row.progressStatus,
+          confidenceScore: row.confidenceScore ?? 0,
+          reviewCount: row.reviewCount ?? 0,
+          lastReviewedAt: row.lastReviewedAt,
+        }
+      : null,
+    createdAt: row.createdAt,
+  }));
+
+  return { deck, cards };
+}
+
+/**
+ * Creates an imported deck and batch-inserts all cards atomically inside a transaction.
+ * If the deck with identical source hash already exists for the user, returns existing deck.
+ */
+export async function createImportedDeckWithCards(
+  userId: string,
+  deckData: {
+    sourceType: string;
+    sourceName: string;
+    sourceHash: string;
+    deckName: string;
+    title: string;
+    description?: string;
+  },
+  cards: Array<{
+    frontMarkdown: string;
+    backMarkdown: string;
+    cardType: 'basic' | 'cloze' | 'fill_in_blank';
+    clozeData?: Record<string, any>;
+    tags?: string[];
+    sourceNoteId?: string;
+    orderIndex: number;
+  }>,
+): Promise<{ deckId: string; cardCount: number; alreadyImported: boolean }> {
+  return await withTransaction(async (client) => {
+    // 1. Check for duplicate within transaction
+    const existingRes = await client.query(
+      `SELECT id, card_count FROM imported_decks WHERE user_id = $1 AND source_hash = $2 LIMIT 1;`,
+      [userId, deckData.sourceHash],
+    );
+
+    if (existingRes.rows.length > 0) {
+      return {
+        deckId: existingRes.rows[0].id,
+        cardCount: existingRes.rows[0].card_count,
+        alreadyImported: true,
+      };
+    }
+
+    // 2. Insert new imported_decks record
+    const deckId = crypto.randomUUID();
+    await client.query(
+      `INSERT INTO imported_decks 
+       (id, user_id, source_type, source_name, source_hash, deck_name, title, description, card_count, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW());`,
+      [
+        deckId,
+        userId,
+        deckData.sourceType,
+        deckData.sourceName,
+        deckData.sourceHash,
+        deckData.deckName,
+        deckData.title,
+        deckData.description || null,
+        cards.length,
+      ],
+    );
+
+    // 3. Batch insert flashcards in batches of 100
+    const batchSize = 100;
+    for (let i = 0; i < cards.length; i += batchSize) {
+      const chunk = cards.slice(i, i + batchSize);
+      const values: any[] = [];
+      const placeholders: string[] = [];
+
+      chunk.forEach((card, idx) => {
+        const offset = idx * 9;
+        placeholders.push(
+          `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9})`
+        );
+        values.push(
+          crypto.randomUUID(),
+          deckId,
+          userId,
+          card.cardType,
+          card.frontMarkdown,
+          card.backMarkdown,
+          card.clozeData ? JSON.stringify(card.clozeData) : null,
+          card.tags && card.tags.length > 0 ? JSON.stringify(card.tags) : null,
+          card.orderIndex ?? (i + idx),
+        );
+      });
+
+      const sql = `
+        INSERT INTO flashcards 
+        (id, deck_id, user_id, card_type, front_markdown, back_markdown, cloze_data, tags, order_index)
+        VALUES ${placeholders.join(', ')};
+      `;
+      await client.query(sql, values);
+    }
+
+    return {
+      deckId,
+      cardCount: cards.length,
+      alreadyImported: false,
+    };
+  });
+}
+
+/**
+ * Deletes an imported deck belonging to a user (cascades to cards and progress).
+ */
+export async function deleteImportedDeck(userId: string, deckId: string): Promise<boolean> {
+  const res = await query(
+    `DELETE FROM imported_decks WHERE id = $1 AND user_id = $2 RETURNING id;`,
+    [deckId, userId],
+  );
+  return res.rowCount !== null && res.rowCount > 0;
+}
+
+/**
+ * Upserts a flashcard's review progress for a user.
+ */
+export async function upsertCardProgress(
+  userId: string,
+  cardId: string,
+  deckId: string,
+  status: 'new' | 'learning' | 'review' | 'mastered',
+  confidenceScore = 3,
+) {
+  const id = crypto.randomUUID();
+  const res = await query(
+    `INSERT INTO flashcard_progress 
+     (id, user_id, card_id, deck_id, status, confidence_score, review_count, last_reviewed_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, 1, NOW(), NOW())
+     ON CONFLICT (user_id, card_id) DO UPDATE SET
+       status = EXCLUDED.status,
+       confidence_score = EXCLUDED.confidence_score,
+       review_count = flashcard_progress.review_count + 1,
+       last_reviewed_at = NOW(),
+       updated_at = NOW()
+     RETURNING status, confidence_score as "confidenceScore", review_count as "reviewCount", last_reviewed_at as "lastReviewedAt";`,
+    [id, userId, cardId, deckId, status, confidenceScore],
+  );
+  return res.rows[0];
+}

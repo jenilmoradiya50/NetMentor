@@ -168,3 +168,94 @@ export const userProgress = pgTable(
     userLessonUnique: unique('user_progress_user_lesson_unique').on(table.userId, table.lessonId),
   }),
 );
+
+/**
+ * 8. imported_decks
+ * Imported flashcard collections (e.g. Jeremy's IT Lab CCNA Anki decks).
+ * Isolated per-user with provenance tracking and duplicate import prevention.
+ */
+export const importedDecks = pgTable(
+  'imported_decks',
+  {
+    id: varchar('id', { length: 36 }).primaryKey(),
+    userId: varchar('user_id', { length: 36 })
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    sourceType: varchar('source_type', { length: 32 }).notNull().default('anki_apkg'),
+    sourceName: varchar('source_name', { length: 255 }).notNull(),
+    sourceHash: varchar('source_hash', { length: 64 }).notNull(),
+    deckName: varchar('deck_name', { length: 128 }).notNull(),
+    title: varchar('title', { length: 255 }).notNull(),
+    description: text('description'),
+    cardCount: integer('card_count').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    userIdIdx: index('imported_decks_user_id_idx').on(table.userId),
+    userSourceHashUnique: unique('imported_decks_user_source_hash_unique').on(table.userId, table.sourceHash),
+  }),
+);
+
+/**
+ * 9. flashcards
+ * Granular flashcard questions, answers, and metadata within an imported deck.
+ */
+export const flashcards = pgTable(
+  'flashcards',
+  {
+    id: varchar('id', { length: 36 }).primaryKey(),
+    deckId: varchar('deck_id', { length: 36 })
+      .notNull()
+      .references(() => importedDecks.id, { onDelete: 'cascade' }),
+    userId: varchar('user_id', { length: 36 })
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    cardType: varchar('card_type', { length: 32 }).notNull().default('basic'),
+    frontMarkdown: text('front_markdown').notNull(),
+    backMarkdown: text('back_markdown').notNull(),
+    clozeData: text('cloze_data'),
+    tags: text('tags'),
+    sourceNoteId: varchar('source_note_id', { length: 64 }),
+    orderIndex: integer('order_index').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    deckIdIdx: index('flashcards_deck_id_idx').on(table.deckId),
+    userIdIdx: index('flashcards_user_id_idx').on(table.userId),
+    deckCardOrderIdx: index('flashcards_deck_order_idx').on(table.deckId, table.orderIndex),
+    deckNoteOrdUnique: unique('flashcards_deck_note_ord_unique').on(table.deckId, table.sourceNoteId, table.orderIndex),
+  }),
+);
+
+/**
+ * 10. flashcard_progress
+ * Per-user learning state, review count, and mastery scores for each flashcard.
+ */
+export const flashcardProgress = pgTable(
+  'flashcard_progress',
+  {
+    id: varchar('id', { length: 36 }).primaryKey(),
+    userId: varchar('user_id', { length: 36 })
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    cardId: varchar('card_id', { length: 36 })
+      .notNull()
+      .references(() => flashcards.id, { onDelete: 'cascade' }),
+    deckId: varchar('deck_id', { length: 36 })
+      .notNull()
+      .references(() => importedDecks.id, { onDelete: 'cascade' }),
+    status: varchar('status', { length: 20 }).notNull().default('new'),
+    confidenceScore: integer('confidence_score').notNull().default(0),
+    reviewCount: integer('review_count').notNull().default(0),
+    lastReviewedAt: timestamp('last_reviewed_at', { withTimezone: true }),
+    nextReviewAt: timestamp('next_review_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    userCardUnique: unique('flashcard_progress_user_card_unique').on(table.userId, table.cardId),
+    userDeckStatusIdx: index('flashcard_progress_user_deck_status_idx').on(table.userId, table.deckId, table.status),
+    userNextReviewIdx: index('flashcard_progress_user_next_review_idx').on(table.userId, table.nextReviewAt),
+  }),
+);

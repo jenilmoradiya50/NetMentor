@@ -98,10 +98,11 @@ export async function requireAuth(
     return null;
   }
 
-  // 5. Apply live role from database to prevent stale privilege retention
+  // 5. Apply live role and user ID from database to prevent stale privilege retention
   if (validation.currentRole) {
     session.role = validation.currentRole;
   }
+  session.userId = validation.userId || session.sub;
 
   // 6. Enforce role-based access control if an endpoint requires a specific role
   if (requiredRole && session.role !== requiredRole) {

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "test": "tsx tests/auth.test.ts",
+    "test": "tsx tests/auth.test.ts && tsx tests/importer.test.ts",
     "preview": "vite preview",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
@@ -18,10 +18,12 @@
     "@node-rs/argon2": "^2.2.2",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.4",
+    "jszip": "^3.10.2",
     "lucide-react": "^1.16.0",
     "pg": "^8.23.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "sql.js": "^1.15.2",
     "tailwind-merge": "^2.6.0"
   },
   "devDependencies": {
@@ -29,6 +31,7 @@
     "@types/pg": "^8.23.1",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
+    "@types/sql.js": "^1.4.11",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
     "drizzle-kit": "^0.31.11",

@@ -16,6 +16,7 @@ export type UserRole = 'admin' | 'user';
 
 export interface SessionPayload {
   sub: string; // username
+  userId?: string; // database user UUID
   role: UserRole;
   iat: number; // Issued at timestamp (seconds)
   exp: number; // Expiration timestamp (seconds)
