@@ -1,4 +1,5 @@
-import { pgTable, varchar, text, timestamp, integer, serial, index, unique } from 'drizzle-orm/pg-core';
+import { pgTable, varchar, text, timestamp, integer, serial, index, unique, uniqueIndex, boolean } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 
 /**
  * 0. users
@@ -259,3 +260,197 @@ export const flashcardProgress = pgTable(
     userNextReviewIdx: index('flashcard_progress_user_next_review_idx').on(table.userId, table.nextReviewAt),
   }),
 );
+
+/**
+ * 11. ai_conversations
+ * Multi-user persistent AI tutoring chat sessions.
+ * Preserves independent conversation contexts across reloads.
+ */
+export const aiConversations = pgTable(
+  'ai_conversations',
+  {
+    id: varchar('id', { length: 36 }).primaryKey(),
+    userId: varchar('user_id', { length: 36 })
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    title: varchar('title', { length: 255 }).default('New Conversation').notNull(),
+    mode: varchar('mode', { length: 32 }).default('general_qa').notNull(),
+    lessonId: varchar('lesson_id', { length: 64 }),
+    sectionId: varchar('section_id', { length: 64 }),
+    exerciseId: varchar('exercise_id', { length: 64 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    userIdIdx: index('ai_conversations_user_id_idx').on(table.userId),
+    userUpdatedIdx: index('ai_conversations_user_updated_idx').on(table.userId, table.updatedAt),
+  }),
+);
+
+/**
+ * 12. ai_messages
+ * Persistent conversation turns belonging to an ai_conversation.
+ * Tracks content, role, model metadata, token usage, and simulated status.
+ */
+export const aiMessages = pgTable(
+  'ai_messages',
+  {
+    id: varchar('id', { length: 36 }).primaryKey(),
+    conversationId: varchar('conversation_id', { length: 36 })
+      .notNull()
+      .references(() => aiConversations.id, { onDelete: 'cascade' }),
+    role: varchar('role', { length: 20 }).notNull(),
+    content: text('content').notNull(),
+    model: varchar('model', { length: 64 }),
+    isSimulated: boolean('is_simulated').default(false).notNull(),
+    promptTokens: integer('prompt_tokens'),
+    completionTokens: integer('completion_tokens'),
+    totalTokens: integer('total_tokens'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    conversationIdIdx: index('ai_messages_conv_id_idx').on(table.conversationId),
+    convCreatedIdx: index('ai_messages_conv_created_idx').on(table.conversationId, table.createdAt),
+  }),
+);
+
+/**
+ * 13. user_generated_lessons
+ * User-created, AI-generated custom networking lessons stored in the user's
+ * Personal Learning Library.
+ * 
+ * Strictly separated from the official curriculum (no foreign keys to learning_paths,
+ * topics, or official lessons).
+ * conversationId has onDelete: 'set null' so deleting chat history preserves saved lessons.
+ */
+export const userGeneratedLessons = pgTable(
+  'user_generated_lessons',
+  {
+    id: varchar('id', { length: 36 }).primaryKey(),
+    userId: varchar('user_id', { length: 36 })
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    conversationId: varchar('conversation_id', { length: 36 })
+      .references(() => aiConversations.id, { onDelete: 'set null' }),
+    title: varchar('title', { length: 255 }).notNull(),
+    topic: varchar('topic', { length: 255 }).notNull(),
+    description: text('description').notNull(),
+    difficulty: varchar('difficulty', { length: 32 }).default('intermediate').notNull(),
+    estimatedMinutes: integer('estimated_minutes').default(20).notNull(),
+    tags: text('tags').default('[]').notNull(),
+    prerequisites: text('prerequisites').default('[]').notNull(),
+    learningObjectives: text('learning_objectives').default('[]').notNull(),
+    contentJson: text('content_json').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    userIdIdx: index('user_gen_lessons_user_id_idx').on(table.userId),
+    userUpdatedIdx: index('user_gen_lessons_user_updated_idx').on(table.userId, table.updatedAt),
+  }),
+);
+
+/**
+ * 14. user_quizzes
+ * User-created or lesson-linked AI quizzes.
+ * Full question definitions (including server-side answer keys) are stored in questions_json.
+ */
+export const userQuizzes = pgTable(
+  'user_quizzes',
+  {
+    id: varchar('id', { length: 36 }).primaryKey(),
+    userId: varchar('user_id', { length: 36 })
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    lessonId: varchar('lesson_id', { length: 36 })
+      .references(() => userGeneratedLessons.id, { onDelete: 'set null' }),
+    title: varchar('title', { length: 255 }).notNull(),
+    topic: varchar('topic', { length: 255 }).notNull(),
+    difficulty: varchar('difficulty', { length: 32 }).default('medium').notNull(),
+    questionCount: integer('question_count').notNull(),
+    questionTypes: text('question_types').notNull().default('["single_choice"]'),
+    questionsJson: text('questions_json').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    userIdIdx: index('user_quizzes_user_id_idx').on(table.userId),
+    lessonIdIdx: index('user_quizzes_lesson_id_idx').on(table.lessonId),
+    userUpdatedIdx: index('user_quizzes_user_updated_idx').on(table.userId, table.updatedAt),
+  }),
+);
+
+/**
+ * 15. quiz_attempts
+ * Graded assessment attempts for a quiz.
+ * Stores user answers, earned score, percentage, and itemized results.
+ */
+export const quizAttempts = pgTable(
+  'quiz_attempts',
+  {
+    id: varchar('id', { length: 36 }).primaryKey(),
+    quizId: varchar('quiz_id', { length: 36 })
+      .notNull()
+      .references(() => userQuizzes.id, { onDelete: 'cascade' }),
+    userId: varchar('user_id', { length: 36 })
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    score: integer('score').notNull(),
+    totalQuestions: integer('total_questions').notNull(),
+    percentage: integer('percentage').notNull(),
+    timeTakenSeconds: integer('time_taken_seconds'),
+    answersJson: text('answers_json').notNull(),
+    resultsJson: text('results_json').notNull(),
+    completedAt: timestamp('completed_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    quizIdIdx: index('quiz_attempts_quiz_id_idx').on(table.quizId),
+    userIdIdx: index('quiz_attempts_user_id_idx').on(table.userId),
+    userCompletedIdx: index('quiz_attempts_user_completed_idx').on(table.userId, table.completedAt),
+  }),
+);
+
+/**
+ * 16. generation_tasks
+ * Persistent, bounded background AI generation jobs.
+ * Supports asynchronous generation of lessons, quizzes, and flashcards
+ * without locking users inside blocking frontend modals.
+ */
+export const generationTasks = pgTable(
+  'generation_tasks',
+  {
+    id: varchar('id', { length: 36 }).primaryKey(),
+    userId: varchar('user_id', { length: 36 })
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    taskType: varchar('task_type', { length: 32 }).notNull(), // 'lesson' | 'quiz' | 'flashcards'
+    status: varchar('status', { length: 20 }).default('queued').notNull(), // 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled'
+    currentStage: varchar('current_stage', { length: 32 }).default('queued').notNull(), // 'queued' | 'prompting_ai' | 'validating_schema' | 'persisting'
+    title: varchar('title', { length: 255 }).notNull(),
+    topic: varchar('topic', { length: 255 }).notNull(),
+    difficulty: varchar('difficulty', { length: 32 }).default('intermediate').notNull(),
+    idempotencyKey: varchar('idempotency_key', { length: 64 }).notNull(),
+    inputParamsJson: text('input_params_json').notNull(),
+    resultDataJson: text('result_data_json'),
+    persistedEntityId: varchar('persisted_entity_id', { length: 36 }),
+    errorMessage: text('error_message'),
+    errorCategory: varchar('error_category', { length: 64 }),
+    isRetryable: boolean('is_retryable').default(true).notNull(),
+    executionDeadlineAt: timestamp('execution_deadline_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+  },
+  (table) => ({
+    userIdIdx: index('generation_tasks_user_id_idx').on(table.userId),
+    userStatusIdx: index('generation_tasks_user_status_idx').on(table.userId, table.status),
+    createdIdx: index('generation_tasks_created_idx').on(table.createdAt),
+    activeDeadlineIdx: index('generation_tasks_active_deadline_idx').on(table.status, table.executionDeadlineAt),
+    userActiveIdempotencyIdx: uniqueIndex('generation_tasks_active_idempotency_idx')
+      .on(table.userId, table.idempotencyKey)
+      .where(sql`status IN ('queued', 'processing')`),
+  }),
+);
+
+
+

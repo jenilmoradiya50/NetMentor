@@ -20,11 +20,13 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [isDemoMode, setIsDemoMode] = useState<boolean>(false);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [user, setUser] = useState<string | null>(null);
-  const [role, setRole] = useState<'admin' | 'user' | 'demo' | null>(null);
+  const isDemoUrl = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1';
+
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => isDemoUrl);
+  const [isDemoMode, setIsDemoMode] = useState<boolean>(() => isDemoUrl);
+  const [isLoading, setIsLoading] = useState<boolean>(() => !isDemoUrl);
+  const [user, setUser] = useState<string | null>(() => (isDemoUrl ? 'demo_student' : null));
+  const [role, setRole] = useState<'admin' | 'user' | 'demo' | null>(() => (isDemoUrl ? 'demo' : null));
   const [error, setError] = useState<string | null>(null);
   const [retryAfter, setRetryAfter] = useState<number | null>(null);
   const [sessionExpiresAt, setSessionExpiresAt] = useState<number | null>(null);
@@ -55,8 +57,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (isDemoUrl) {
+      return;
+    }
     checkExistingSession();
-  }, [checkExistingSession]);
+  }, [checkExistingSession, isDemoUrl]);
 
   const login = async (username: string, passphrase: string): Promise<boolean> => {
     setIsLoading(true);

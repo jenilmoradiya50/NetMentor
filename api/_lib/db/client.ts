@@ -19,6 +19,48 @@ interface TestMockStore {
   validateDbSession?: (sessionId: string) => Promise<any>;
   revokeDbSession?: (sessionId: string) => Promise<void>;
   query?: (text: string, params?: any[]) => Promise<any>;
+  getUserLessonProgress?: (userId: string) => Promise<any[]>;
+  upsertLessonProgress?: (
+    userId: string,
+    lessonId: string,
+    masteryLevel: string,
+    confidenceScore: number,
+    notes?: string,
+  ) => Promise<any>;
+  createAiConversation?: (userId: string, options?: any) => Promise<any>;
+  getUserAiConversations?: (userId: string) => Promise<any[]>;
+  getAiConversationWithMessages?: (userId: string, conversationId: string) => Promise<any>;
+  updateAiConversationTitle?: (userId: string, conversationId: string, title: string) => Promise<boolean>;
+  deleteAiConversation?: (userId: string, conversationId: string) => Promise<boolean>;
+  addAiMessage?: (userId: string, conversationId: string, message: any) => Promise<any>;
+  createUserGeneratedLesson?: (userId: string, lesson: any) => Promise<any>;
+  getUserGeneratedLessons?: (userId: string, filter?: { search?: string; difficulty?: string }) => Promise<any[]>;
+  getUserGeneratedLessonById?: (userId: string, lessonId: string) => Promise<any>;
+  updateUserGeneratedLessonTitle?: (userId: string, lessonId: string, title: string) => Promise<boolean>;
+  deleteUserGeneratedLesson?: (userId: string, lessonId: string) => Promise<boolean>;
+  getLessonFlashcardDeck?: (userId: string, lessonId: string) => Promise<any>;
+  saveOrUpdateLessonFlashcardDeck?: (userId: string, lessonId: string, deckData: any, cards: any[]) => Promise<any>;
+  saveOrUpdateStandaloneFlashcardDeck?: (userId: string, deckId: string | null | undefined, deckData: any, cards: any[]) => Promise<any>;
+  getDeckWithCards?: (userId: string, deckId: string) => Promise<any>;
+  deleteImportedDeck?: (userId: string, deckId: string) => Promise<boolean>;
+  createUserQuiz?: (userId: string, quiz: any) => Promise<any>;
+  getUserQuizzes?: (userId: string, filter?: { search?: string; difficulty?: string; lessonId?: string }) => Promise<any[]>;
+  getUserQuizById?: (userId: string, quizId: string) => Promise<any>;
+  updateQuizQuestion?: (userId: string, quizId: string, questionId: string, updates: any) => Promise<boolean>;
+  deleteUserQuiz?: (userId: string, quizId: string) => Promise<boolean>;
+  recordQuizAttempt?: (userId: string, quizId: string, attempt: any) => Promise<any>;
+  getQuizAttempts?: (userId: string, quizId: string) => Promise<any[]>;
+  getQuizAttemptById?: (userId: string, attemptId: string) => Promise<any>;
+  getLessonQuiz?: (userId: string, lessonId: string) => Promise<any>;
+  createGenerationTask?: (userId: string, task: any) => Promise<any>;
+  startGenerationTaskProcessing?: (taskId: string, stage?: string, executionBudgetSeconds?: number) => Promise<boolean>;
+  getGenerationTaskById?: (userId: string, taskId: string) => Promise<any>;
+  getUserActiveGenerationTasks?: (userId: string) => Promise<any[]>;
+  updateGenerationTaskStage?: (taskId: string, stage: string) => Promise<boolean>;
+  completeGenerationTask?: (taskId: string, resultData: any, persistedEntityId?: string) => Promise<boolean>;
+  failGenerationTask?: (taskId: string, error: { message: string; category?: string; isRetryable?: boolean }) => Promise<boolean>;
+  cancelGenerationTask?: (userId: string, taskId: string) => Promise<boolean>;
+  cleanupStaleGenerationTasks?: (olderThanSeconds?: number) => Promise<number>;
 }
 
 let activeTestMockStore: TestMockStore | null = null;
@@ -115,7 +157,7 @@ export function inspectConnectionConfig(connectionString: string): PoolInspectio
     connectionType,
     max,
     idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 10000,
+    connectionTimeoutMillis: 30000,
     ssl,
   };
 }
@@ -673,6 +715,10 @@ export async function getUserImportedDecks(userId: string) {
  * Retrieves a single imported deck and its ordered cards with user learning progress.
  */
 export async function getDeckWithCards(userId: string, deckId: string) {
+  if (activeTestMockStore?.getDeckWithCards) {
+    return activeTestMockStore.getDeckWithCards(userId, deckId);
+  }
+
   const deckRes = await query(
     `SELECT 
        id, user_id as "userId", source_type as "sourceType", 
@@ -830,11 +876,358 @@ export async function createImportedDeckWithCards(
  * Deletes an imported deck belonging to a user (cascades to cards and progress).
  */
 export async function deleteImportedDeck(userId: string, deckId: string): Promise<boolean> {
+  if (activeTestMockStore?.deleteImportedDeck) {
+    return activeTestMockStore.deleteImportedDeck(userId, deckId);
+  }
+
   const res = await query(
     `DELETE FROM imported_decks WHERE id = $1 AND user_id = $2 RETURNING id;`,
     [deckId, userId],
   );
   return res.rowCount !== null && res.rowCount > 0;
+}
+
+/**
+ * Retrieves the AI-generated flashcard deck associated with a specific user-generated lesson.
+ * (Milestone 3)
+ */
+export async function getLessonFlashcardDeck(
+  userId: string,
+  lessonId: string,
+): Promise<{ deck: any; cards: any[] } | null> {
+  if (activeTestMockStore?.getLessonFlashcardDeck) {
+    return activeTestMockStore.getLessonFlashcardDeck(userId, lessonId);
+  }
+
+  const sourceName = `lesson:${lessonId}`;
+  const res = await query(
+    `SELECT id FROM imported_decks WHERE user_id = $1 AND source_type = 'ai_generated' AND source_name = $2 LIMIT 1;`,
+    [userId, sourceName],
+  );
+
+  if (res.rows.length === 0) return null;
+  return getDeckWithCards(userId, res.rows[0].id);
+}
+
+/**
+ * Saves or updates an AI-generated flashcard deck for a custom lesson.
+ * Preserves existing card IDs and review progress when updating an existing deck.
+ * (Milestone 3)
+ */
+export async function saveOrUpdateLessonFlashcardDeck(
+  userId: string,
+  lessonId: string,
+  deckData: {
+    title: string;
+    description?: string;
+    deckName?: string;
+  },
+  cards: Array<{
+    id?: string;
+    frontMarkdown: string;
+    backMarkdown: string;
+    cardType?: 'basic' | 'cloze' | 'fill_in_blank';
+    tags?: string[];
+    orderIndex?: number;
+  }>,
+): Promise<{ deckId: string; cardCount: number; isUpdated: boolean }> {
+  if (activeTestMockStore?.saveOrUpdateLessonFlashcardDeck) {
+    return activeTestMockStore.saveOrUpdateLessonFlashcardDeck(userId, lessonId, deckData, cards);
+  }
+
+  const sourceName = `lesson:${lessonId}`;
+  const sourceHash = crypto
+    .createHash('sha256')
+    .update(`${userId}:lesson:${lessonId}`)
+    .digest('hex');
+
+  return await withTransaction(async (client) => {
+    // 1. Check if deck already exists for this lesson
+    const existingRes = await client.query(
+      `SELECT id, card_count FROM imported_decks WHERE user_id = $1 AND source_type = 'ai_generated' AND source_name = $2 LIMIT 1;`,
+      [userId, sourceName],
+    );
+
+    let deckId: string;
+    let isUpdated = false;
+
+    if (existingRes.rows.length > 0) {
+      deckId = existingRes.rows[0].id;
+      isUpdated = true;
+
+      // Update deck metadata
+      await client.query(
+        `UPDATE imported_decks 
+         SET title = $1, description = $2, card_count = $3, updated_at = NOW()
+         WHERE id = $4 AND user_id = $5;`,
+        [deckData.title, deckData.description || null, cards.length, deckId, userId],
+      );
+
+      // Query existing cards in the deck
+      const existingCardsRes = await client.query(
+        `SELECT id FROM flashcards WHERE deck_id = $1 AND user_id = $2;`,
+        [deckId, userId],
+      );
+      const existingCardIds = new Set(existingCardsRes.rows.map((r: any) => r.id));
+      const keptCardIds = new Set<string>();
+
+      // Update existing cards or insert new ones
+      for (let i = 0; i < cards.length; i++) {
+        const c = cards[i];
+        const cardOrder = c.orderIndex ?? i;
+        const tagsJson = c.tags && c.tags.length > 0 ? JSON.stringify(c.tags) : null;
+
+        if (c.id && existingCardIds.has(c.id)) {
+          // Update in place preserving ID and all review progress
+          keptCardIds.add(c.id);
+          await client.query(
+            `UPDATE flashcards 
+             SET front_markdown = $1, back_markdown = $2, tags = $3, order_index = $4
+             WHERE id = $5 AND deck_id = $6 AND user_id = $7;`,
+            [c.frontMarkdown, c.backMarkdown, tagsJson, cardOrder, c.id, deckId, userId],
+          );
+        } else {
+          // New card
+          const newCardId = crypto.randomUUID();
+          keptCardIds.add(newCardId);
+          await client.query(
+            `INSERT INTO flashcards 
+             (id, deck_id, user_id, card_type, front_markdown, back_markdown, tags, order_index, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW());`,
+            [
+              newCardId,
+              deckId,
+              userId,
+              c.cardType || 'basic',
+              c.frontMarkdown,
+              c.backMarkdown,
+              tagsJson,
+              cardOrder,
+            ],
+          );
+        }
+      }
+
+      // Delete cards that were removed from the draft (cascades to their progress)
+      for (const oldId of existingCardIds) {
+        if (!keptCardIds.has(oldId)) {
+          await client.query(
+            `DELETE FROM flashcards WHERE id = $1 AND deck_id = $2 AND user_id = $3;`,
+            [oldId, deckId, userId],
+          );
+        }
+      }
+    } else {
+      // Completely new deck
+      deckId = crypto.randomUUID();
+      await client.query(
+        `INSERT INTO imported_decks 
+         (id, user_id, source_type, source_name, source_hash, deck_name, title, description, card_count, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW());`,
+        [
+          deckId,
+          userId,
+          'ai_generated',
+          sourceName,
+          sourceHash,
+          deckData.deckName || 'ai-lesson-flashcards',
+          deckData.title,
+          deckData.description || null,
+          cards.length,
+        ],
+      );
+
+      // Batch insert new cards
+      for (let i = 0; i < cards.length; i++) {
+        const c = cards[i];
+        const cardId = c.id || crypto.randomUUID();
+        const cardOrder = c.orderIndex ?? i;
+        const tagsJson = c.tags && c.tags.length > 0 ? JSON.stringify(c.tags) : null;
+
+        await client.query(
+          `INSERT INTO flashcards 
+           (id, deck_id, user_id, card_type, front_markdown, back_markdown, tags, order_index, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW());`,
+          [
+            cardId,
+            deckId,
+            userId,
+            c.cardType || 'basic',
+            c.frontMarkdown,
+            c.backMarkdown,
+            tagsJson,
+            cardOrder,
+          ],
+        );
+      }
+    }
+
+    return {
+      deckId,
+      cardCount: cards.length,
+      isUpdated,
+    };
+  });
+}
+
+/**
+ * Saves or updates an AI-generated standalone flashcard deck for a user.
+ * Preserves existing card IDs and review progress when updating an existing deck.
+ */
+export async function saveOrUpdateStandaloneFlashcardDeck(
+  userId: string,
+  deckId: string | null | undefined,
+  deckData: {
+    title: string;
+    description?: string;
+    topic?: string;
+    deckName?: string;
+  },
+  cards: Array<{
+    id?: string;
+    frontMarkdown: string;
+    backMarkdown: string;
+    cardType?: 'basic' | 'cloze' | 'fill_in_blank';
+    tags?: string[];
+    orderIndex?: number;
+  }>,
+): Promise<{ deckId: string; cardCount: number; isUpdated: boolean }> {
+  if (activeTestMockStore?.saveOrUpdateStandaloneFlashcardDeck) {
+    return activeTestMockStore.saveOrUpdateStandaloneFlashcardDeck(userId, deckId, deckData, cards);
+  }
+
+  return await withTransaction(async (client) => {
+    let resolvedDeckId: string = deckId ? deckId.trim() : '';
+
+    if (resolvedDeckId) {
+      // 1. Check if deck exists and belongs to user
+      const existingRes = await client.query(
+        `SELECT id, card_count FROM imported_decks WHERE id = $1 AND user_id = $2 LIMIT 1;`,
+        [resolvedDeckId, userId],
+      );
+
+      if (existingRes.rows.length > 0) {
+
+        // Update deck metadata
+        await client.query(
+          `UPDATE imported_decks 
+           SET title = $1, description = $2, card_count = $3, updated_at = NOW()
+           WHERE id = $4 AND user_id = $5;`,
+          [deckData.title, deckData.description || null, cards.length, resolvedDeckId, userId],
+        );
+
+        // Query existing cards in the deck
+        const existingCardsRes = await client.query(
+          `SELECT id FROM flashcards WHERE deck_id = $1 AND user_id = $2;`,
+          [resolvedDeckId, userId],
+        );
+        const existingCardIds = new Set(existingCardsRes.rows.map((r: any) => r.id));
+        const keptCardIds = new Set<string>();
+
+        // Update existing cards or insert new ones
+        for (let i = 0; i < cards.length; i++) {
+          const c = cards[i];
+          const cardOrder = c.orderIndex ?? i;
+          const tagsJson = c.tags && c.tags.length > 0 ? JSON.stringify(c.tags) : null;
+
+          if (c.id && existingCardIds.has(c.id)) {
+            // Update in place preserving ID and all review progress
+            keptCardIds.add(c.id);
+            await client.query(
+              `UPDATE flashcards 
+               SET front_markdown = $1, back_markdown = $2, tags = $3, order_index = $4
+               WHERE id = $5 AND deck_id = $6 AND user_id = $7;`,
+              [c.frontMarkdown, c.backMarkdown, tagsJson, cardOrder, c.id, resolvedDeckId, userId],
+            );
+          } else {
+            // New card
+            const newCardId = crypto.randomUUID();
+            keptCardIds.add(newCardId);
+            await client.query(
+              `INSERT INTO flashcards 
+               (id, deck_id, user_id, card_type, front_markdown, back_markdown, tags, order_index, created_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW());`,
+              [
+                newCardId,
+                resolvedDeckId,
+                userId,
+                c.cardType || 'basic',
+                c.frontMarkdown,
+                c.backMarkdown,
+                tagsJson,
+                cardOrder,
+              ],
+            );
+          }
+        }
+
+        // Delete cards that were removed from the draft
+        for (const oldId of existingCardIds) {
+          if (!keptCardIds.has(oldId)) {
+            await client.query(
+              `DELETE FROM flashcards WHERE id = $1 AND deck_id = $2 AND user_id = $3;`,
+              [oldId, resolvedDeckId, userId],
+            );
+          }
+        }
+
+        return { deckId: resolvedDeckId, cardCount: cards.length, isUpdated: true };
+      }
+    }
+
+    // Completely new deck
+    resolvedDeckId = crypto.randomUUID();
+    const sourceName = `standalone:${deckData.topic || 'deck'}:${resolvedDeckId}`;
+    const sourceHash = crypto
+      .createHash('sha256')
+      .update(`${userId}:standalone:${resolvedDeckId}`)
+      .digest('hex');
+
+    await client.query(
+      `INSERT INTO imported_decks 
+       (id, user_id, source_type, source_name, source_hash, deck_name, title, description, card_count, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW());`,
+      [
+        resolvedDeckId,
+        userId,
+        'ai_standalone',
+        sourceName,
+        sourceHash,
+        deckData.deckName || deckData.topic || 'ai-standalone-flashcards',
+        deckData.title,
+        deckData.description || null,
+        cards.length,
+      ],
+    );
+
+    // Batch insert new cards
+    for (let i = 0; i < cards.length; i++) {
+      const c = cards[i];
+      const cardId = c.id || crypto.randomUUID();
+      const tagsJson = c.tags && c.tags.length > 0 ? JSON.stringify(c.tags) : null;
+      await client.query(
+        `INSERT INTO flashcards 
+         (id, deck_id, user_id, card_type, front_markdown, back_markdown, tags, order_index, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW());`,
+        [
+          cardId,
+          resolvedDeckId,
+          userId,
+          c.cardType || 'basic',
+          c.frontMarkdown,
+          c.backMarkdown,
+          tagsJson,
+          c.orderIndex ?? i,
+        ],
+      );
+    }
+
+    return {
+      deckId: resolvedDeckId,
+      cardCount: cards.length,
+      isUpdated: false,
+    };
+  });
 }
 
 /**
@@ -863,3 +1256,2060 @@ export async function upsertCardProgress(
   );
   return res.rows[0];
 }
+
+/**
+ * Ensures baseline curriculum records exist in Neon PostgreSQL (learning_paths, topics, lessons)
+ * so that foreign key constraints on user_progress are satisfied. Idempotent.
+ */
+export async function ensureCurriculumSeed(): Promise<void> {
+  const seedPaths = [
+    {
+      id: 'path-fundamentals',
+      slug: 'network-fundamentals',
+      title: 'Network Fundamentals & Architecture',
+      description: 'Master first-principles packet delivery, OSI and TCP/IP protocol stacks, IPv4 binary math, and Ethernet switching.',
+      targetCert: 'Fundamentals',
+      orderIndex: 1,
+    },
+    {
+      id: 'path-ccna',
+      slug: 'ccna-200-301',
+      title: 'Cisco CCNA (200-301)',
+      description: 'Comprehensive associate-level routing, switching, security, and IP services engineering.',
+      targetCert: 'CCNA',
+      orderIndex: 2,
+    },
+    {
+      id: 'path-ccnp',
+      slug: 'ccnp-encor-350-401',
+      title: 'Cisco CCNP Enterprise (ENCOR)',
+      description: 'Advanced enterprise architecture, scalable BGP routing, MPLS L3VPNs, VRF segmentation, and SD-WAN.',
+      targetCert: 'CCNP Enterprise',
+      orderIndex: 3,
+    },
+  ];
+
+  const seedTopics = [
+    {
+      id: 'topic-packet-walk',
+      pathId: 'path-fundamentals',
+      slug: 'packet-delivery-encapsulation',
+      title: 'Packet Delivery & Encapsulation',
+      description: 'Understand how data traverses networks from client to server, stripping and rewriting headers at each hop.',
+      orderIndex: 1,
+      estimatedMinutes: 20,
+    },
+    {
+      id: 'topic-subnetting',
+      pathId: 'path-fundamentals',
+      slug: 'ipv4-addressing-and-subnetting',
+      title: 'IPv4 Addressing & Subnetting Mechanics',
+      description: 'Master binary prefixing, block sizing, and the Magic Number method for rapid mental subnetting.',
+      orderIndex: 2,
+      estimatedMinutes: 25,
+    },
+    {
+      id: 'topic-ospf',
+      pathId: 'path-ccna',
+      slug: 'ospf-routing-protocol',
+      title: 'OSPFv2 Routing Protocol',
+      description: 'Open Shortest Path First link-state routing, LSAs, metric calculation, and neighbor formation.',
+      orderIndex: 1,
+      estimatedMinutes: 30,
+    },
+    {
+      id: 'topic-bgp',
+      pathId: 'path-ccnp',
+      slug: 'bgp-path-selection',
+      title: 'Border Gateway Protocol (BGP) & Path Selection',
+      description: 'Autonomous Systems, eBGP/iBGP peering, and the deterministic 13-step best path algorithm.',
+      orderIndex: 1,
+      estimatedMinutes: 90,
+    },
+    {
+      id: 'topic-sdwan',
+      pathId: 'path-ccnp',
+      slug: 'cisco-sd-wan-architecture',
+      title: 'Cisco SD-WAN Architecture & Planes',
+      description: 'Orchestration (vBond), Management (vManage), Control (vSmart via OMP), and Data (vEdge IPsec).',
+      orderIndex: 2,
+      estimatedMinutes: 90,
+    },
+    {
+      id: 'topic-mpls-vpn',
+      pathId: 'path-ccnp',
+      slug: 'mpls-l3vpn-vrf',
+      title: 'MPLS Layer 3 VPNs & VRF Architecture',
+      description: 'Provider edge routing, VRFs, Route Distinguishers, Route Targets, MP-BGP VPNv4, and inter-VRF route leaking.',
+      orderIndex: 3,
+      estimatedMinutes: 45,
+    },
+    {
+      id: 'topic-qos',
+      pathId: 'path-ccnp',
+      slug: 'qos-traffic-conditioning',
+      title: 'Quality of Service (QoS) & Traffic Conditioning',
+      description: 'Classification, marking, policing, shaping, queuing (LLQ/CBWFQ), and congestion avoidance (WRED).',
+      orderIndex: 4,
+      estimatedMinutes: 45,
+    },
+  ];
+
+  const seedLessons = [
+    {
+      id: 'lesson-packet-walk',
+      topicId: 'topic-packet-walk',
+      slug: 'anatomy-of-a-packet-walk',
+      title: 'The Anatomy of a Packet Walk',
+      summary: 'Host-to-Host Delivery Across Routers: What Changes and What Stays the Same.',
+      contentMarkdown: 'Master the separation of Layer 2 hop-by-hop framing vs Layer 3 end-to-end IP delivery.',
+      orderIndex: 1,
+    },
+    {
+      id: 'lesson-subnetting-magic-number',
+      topicId: 'topic-subnetting',
+      slug: 'subnetting-from-scratch-magic-number',
+      title: 'Subnetting from Scratch: Magic Number & Binary Intuition',
+      summary: 'Calculate Network IDs, Usable Ranges, and Broadcasts Mentally in Seconds.',
+      contentMarkdown: 'Understand the subnet mask knife, powers of 2, and the 256-minus-mask Magic Number rule.',
+      orderIndex: 2,
+    },
+    {
+      id: 'lesson-ospf-neighbor-states',
+      topicId: 'topic-ospf',
+      slug: 'ospf-neighbor-adjacencies',
+      title: 'OSPF Neighbor Adjacencies: The 7-State Formation Machine',
+      summary: 'From First Hello to Full LSDB Synchronization — and Where Engineers Get Stuck.',
+      contentMarkdown: 'Understand the Down, Init, 2-Way, ExStart, Exchange, Loading, Full states and MTU mismatch troubleshooting.',
+      orderIndex: 3,
+    },
+    {
+      id: 'lesson-bgp-path-selection',
+      topicId: 'topic-bgp',
+      slug: 'bgp-path-selection-architecture',
+      title: 'Border Gateway Protocol (BGP) & Path Selection: Architecture, Peering & Decision Mechanics',
+      summary: 'Autonomous Systems, eBGP vs. iBGP Rules, TCP 179 Adjacencies, and the 13-Step Best Path Algorithm.',
+      contentMarkdown: 'Understand BGP path-vector mechanics, TCP 179 peering, split-horizon, next-hop-self, and the 13-step best path selection algorithm.',
+      orderIndex: 4,
+    },
+    {
+      id: 'lesson-sd-wan-architecture',
+      topicId: 'topic-sdwan',
+      slug: 'sd-wan-architecture-and-control-planes',
+      title: 'Cisco SD-WAN Architecture & Control Planes: Underlay, Overlay & Fabric Orchestration',
+      summary: 'Orchestration (vBond), Management (vManage), Control (vSmart via OMP), and Data (WAN Edge IPsec) Mechanics.',
+      contentMarkdown: 'Understand SD-WAN underlay vs overlay, the 4 architectural planes, device onboarding, OMP routing, TLOCs, and data plane BFD IPsec forwarding.',
+      orderIndex: 5,
+    },
+    {
+      id: 'lesson-bgp-troubleshooting',
+      topicId: 'topic-bgp',
+      slug: 'bgp-troubleshooting-and-route-advertisement',
+      title: 'BGP Troubleshooting & Route Advertisement: Adjacencies, Policy Filtering & RIB Installation',
+      summary: 'Diagnosing Stuck Neighbor States, Route Injection Failures, Inaccessible Next-Hops, and Routing Table Discrepancies.',
+      contentMarkdown: 'Master systematic BGP troubleshooting across 3 operational phases: TCP 179 adjacency negotiation, route injection and filtering, and best path selection with RIB installation.',
+      orderIndex: 6,
+    },
+    {
+      id: 'lesson-sd-wan-routing-policy',
+      topicId: 'topic-sdwan',
+      slug: 'cisco-sd-wan-routing-policies-and-troubleshooting',
+      title: 'Cisco SD-WAN Routing, Policies & Troubleshooting: OMP, Policy Enforcement & Forwarding Diagnostics',
+      summary: 'OMP Route Propagation, TLOC Health, BFD Telemetry, Centralized vs. Localized Policies, and Data-Plane Incident Resolution.',
+      contentMarkdown: 'Master SD-WAN OMP routing mechanics, TLOC reachability, BFD telemetry, the 4-quadrant policy matrix, Application-Aware Routing, and systematic forwarding troubleshooting.',
+      orderIndex: 7,
+    },
+    {
+      id: 'lesson-mpls-l3vpn',
+      topicId: 'topic-mpls-vpn',
+      slug: 'mpls-l3vpn-vrf-route-leaking',
+      title: 'MPLS L3VPN and VRF Route Leaking: RD, RT, MP-BGP and Inter-VRF Connectivity',
+      summary: 'Architectural Isolation, VRFs, Route Distinguishers, Route Targets, MP-BGP VPNv4 Exchange, and Controlled Route Leaking.',
+      contentMarkdown: 'Master MPLS L3VPN architecture, CE-PE-P router roles, VRF routing tables, 64-bit RDs vs 64-bit extended community RTs, MP-BGP VPNv4 peering, MPLS transport vs VPN label stacks, and inter-VRF route leaking diagnostics.',
+      orderIndex: 8,
+    },
+    {
+      id: 'lesson-qos-fundamentals',
+      topicId: 'topic-qos',
+      slug: 'qos-fundamentals-and-troubleshooting',
+      title: 'QoS Fundamentals & Troubleshooting: Classification, Marking, Conditioning & Queueing',
+      summary: 'Bandwidth, Delay, Jitter, Packet Loss, CoS/DSCP Mapping, Trust Boundaries, Token-Bucket Conditioning, LLQ/CBWFQ, and WRED Diagnostics.',
+      contentMarkdown: 'Master enterprise QoS principles, Layer 2 CoS vs Layer 3 DSCP, trust boundary enforcement, token-bucket policing and shaping, CBWFQ and LLQ priority queueing, WRED congestion avoidance, and MQC troubleshooting.',
+      orderIndex: 9,
+    },
+  ];
+
+  for (const p of seedPaths) {
+    await query(
+      `INSERT INTO learning_paths (id, slug, title, description, target_cert, order_index)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (slug) DO UPDATE SET title = EXCLUDED.title, description = EXCLUDED.description;`,
+      [p.id, p.slug, p.title, p.description, p.targetCert, p.orderIndex],
+    );
+  }
+
+  for (const t of seedTopics) {
+    await query(
+      `INSERT INTO topics (id, path_id, slug, title, description, order_index, estimated_minutes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, description = EXCLUDED.description;`,
+      [t.id, t.pathId, t.slug, t.title, t.description, t.orderIndex, t.estimatedMinutes],
+    );
+  }
+
+  for (const l of seedLessons) {
+    await query(
+      `INSERT INTO lessons (id, topic_id, slug, title, summary, content_markdown, order_index)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, summary = EXCLUDED.summary;`,
+      [l.id, l.topicId, l.slug, l.title, l.summary, l.contentMarkdown, l.orderIndex],
+    );
+  }
+}
+
+/**
+ * Retrieves all lesson progress records for a user.
+ */
+export async function getUserLessonProgress(userId: string) {
+  if (activeTestMockStore?.getUserLessonProgress) {
+    return activeTestMockStore.getUserLessonProgress(userId);
+  }
+
+  const res = await query(
+    `SELECT 
+       lesson_id as "lessonId",
+       mastery_level as "masteryLevel",
+       confidence_score as "confidenceScore",
+       last_reviewed_at as "lastReviewedAt",
+       notes
+     FROM user_progress
+     WHERE user_id = $1
+     ORDER BY last_reviewed_at DESC;`,
+    [userId],
+  );
+
+  return res.rows.map((row: any) => {
+    let exerciseAttempts: Record<string, any> | undefined = undefined;
+    if (row.notes && typeof row.notes === 'string' && row.notes.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(row.notes);
+        if (parsed && typeof parsed.exercises === 'object') {
+          exerciseAttempts = parsed.exercises;
+        }
+      } catch {}
+    }
+    return {
+      ...row,
+      exerciseAttempts,
+    };
+  });
+}
+
+/**
+ * Upserts a user's progress for a specific curriculum lesson.
+ */
+export async function upsertLessonProgress(
+  userId: string,
+  lessonId: string,
+  masteryLevel: string,
+  confidenceScore = 3,
+  notes?: string,
+) {
+  if (activeTestMockStore?.upsertLessonProgress) {
+    return activeTestMockStore.upsertLessonProgress(userId, lessonId, masteryLevel, confidenceScore, notes);
+  }
+
+  await ensureCurriculumSeed();
+
+  const id = crypto.randomUUID();
+  const res = await query(
+    `INSERT INTO user_progress 
+     (id, user_id, lesson_id, mastery_level, confidence_score, last_reviewed_at, notes)
+     VALUES ($1, $2, $3, $4, $5, NOW(), $6)
+     ON CONFLICT (user_id, lesson_id) DO UPDATE SET
+       mastery_level = EXCLUDED.mastery_level,
+       confidence_score = EXCLUDED.confidence_score,
+       last_reviewed_at = NOW(),
+       notes = CASE
+         WHEN user_progress.notes IS NOT NULL 
+              AND user_progress.notes LIKE '{%' 
+              AND EXCLUDED.notes IS NOT NULL 
+              AND EXCLUDED.notes LIKE '{%' 
+         THEN (
+           jsonb_set(
+             COALESCE(user_progress.notes::jsonb, '{}'::jsonb),
+             '{exercises}',
+             COALESCE(user_progress.notes::jsonb->'exercises', '{}'::jsonb) || COALESCE(EXCLUDED.notes::jsonb->'exercises', '{}'::jsonb),
+             true
+           ) || (EXCLUDED.notes::jsonb - 'exercises')
+         )::text
+         ELSE COALESCE(EXCLUDED.notes, user_progress.notes)
+       END
+     RETURNING 
+       lesson_id as "lessonId",
+       mastery_level as "masteryLevel",
+       confidence_score as "confidenceScore",
+       last_reviewed_at as "lastReviewedAt",
+       notes;`,
+    [id, userId, lessonId, masteryLevel, confidenceScore, notes || null],
+  );
+  return res.rows[0];
+}
+
+export interface AiConversationRecord {
+  id: string;
+  userId: string;
+  title: string;
+  mode: string;
+  lessonId?: string | null;
+  sectionId?: string | null;
+  exerciseId?: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AiMessageRecord {
+  id: string;
+  conversationId: string;
+  role: 'user' | 'assistant';
+  content: string;
+  model?: string | null;
+  isSimulated: boolean;
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  totalTokens?: number | null;
+  createdAt: Date;
+}
+
+let aiTablesEnsured = false;
+
+/**
+ * Ensures AI conversation tables exist in the public schema.
+ */
+export async function ensureAiTables(): Promise<void> {
+  if (aiTablesEnsured) return;
+  if (!isDatabaseConfigured()) return;
+
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS "ai_conversations" (
+        "id" varchar(36) PRIMARY KEY NOT NULL,
+        "user_id" varchar(36) NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+        "title" varchar(255) DEFAULT 'New Conversation' NOT NULL,
+        "mode" varchar(32) DEFAULT 'general_qa' NOT NULL,
+        "lesson_id" varchar(64),
+        "section_id" varchar(64),
+        "exercise_id" varchar(64),
+        "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+        "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS "ai_conversations_user_id_idx" ON "ai_conversations" ("user_id");
+      CREATE INDEX IF NOT EXISTS "ai_conversations_user_updated_idx" ON "ai_conversations" ("user_id", "updated_at");
+
+      CREATE TABLE IF NOT EXISTS "ai_messages" (
+        "id" varchar(36) PRIMARY KEY NOT NULL,
+        "conversation_id" varchar(36) NOT NULL REFERENCES "ai_conversations"("id") ON DELETE CASCADE,
+        "role" varchar(20) NOT NULL,
+        "content" text NOT NULL,
+        "model" varchar(64),
+        "is_simulated" boolean DEFAULT false NOT NULL,
+        "prompt_tokens" integer,
+        "completion_tokens" integer,
+        "total_tokens" integer,
+        "created_at" timestamp with time zone DEFAULT now() NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS "ai_messages_conv_id_idx" ON "ai_messages" ("conversation_id");
+      CREATE INDEX IF NOT EXISTS "ai_messages_conv_created_idx" ON "ai_messages" ("conversation_id", "created_at");
+    `);
+    aiTablesEnsured = true;
+  } catch (err: any) {
+    console.error('[AI DB Init Warning]:', err?.message);
+  }
+}
+
+/**
+ * Creates a new AI conversation owned by the authenticated user.
+ */
+export async function createAiConversation(
+  userId: string,
+  options?: {
+    id?: string;
+    title?: string;
+    mode?: string;
+    lessonId?: string;
+    sectionId?: string;
+    exerciseId?: string;
+  }
+): Promise<AiConversationRecord> {
+  if (activeTestMockStore?.createAiConversation) {
+    return activeTestMockStore.createAiConversation(userId, options);
+  }
+
+  await ensureAiTables();
+  const id = options?.id || crypto.randomUUID();
+  const title = (options?.title || 'New Conversation').trim();
+  const mode = (options?.mode || 'general_qa').trim();
+
+  const res = await query<AiConversationRecord>(
+    `INSERT INTO ai_conversations 
+     (id, user_id, title, mode, lesson_id, section_id, exercise_id, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+     RETURNING 
+       id,
+       user_id as "userId",
+       title,
+       mode,
+       lesson_id as "lessonId",
+       section_id as "sectionId",
+       exercise_id as "exerciseId",
+       created_at as "createdAt",
+       updated_at as "updatedAt";`,
+    [
+      id,
+      userId,
+      title,
+      mode,
+      options?.lessonId || null,
+      options?.sectionId || null,
+      options?.exerciseId || null,
+    ]
+  );
+  return res.rows[0];
+}
+
+/**
+ * Retrieves all AI conversations for an authenticated user, ordered by most recently updated.
+ */
+export async function getUserAiConversations(userId: string): Promise<AiConversationRecord[]> {
+  if (activeTestMockStore?.getUserAiConversations) {
+    return activeTestMockStore.getUserAiConversations(userId);
+  }
+
+  await ensureAiTables();
+  const res = await query<AiConversationRecord>(
+    `SELECT 
+       id,
+       user_id as "userId",
+       title,
+       mode,
+       lesson_id as "lessonId",
+       section_id as "sectionId",
+       exercise_id as "exerciseId",
+       created_at as "createdAt",
+       updated_at as "updatedAt"
+     FROM ai_conversations
+     WHERE user_id = $1
+     ORDER BY updated_at DESC;`,
+    [userId]
+  );
+  return res.rows;
+}
+
+/**
+ * Loads a specific conversation and all its messages, strictly validating user ownership.
+ * Returns null if the conversation doesn't exist or does not belong to the user.
+ */
+export async function getAiConversationWithMessages(
+  userId: string,
+  conversationId: string
+): Promise<{ conversation: AiConversationRecord; messages: AiMessageRecord[] } | null> {
+  if (activeTestMockStore?.getAiConversationWithMessages) {
+    return activeTestMockStore.getAiConversationWithMessages(userId, conversationId);
+  }
+
+  await ensureAiTables();
+
+  const convRes = await query<AiConversationRecord>(
+    `SELECT 
+       id,
+       user_id as "userId",
+       title,
+       mode,
+       lesson_id as "lessonId",
+       section_id as "sectionId",
+       exercise_id as "exerciseId",
+       created_at as "createdAt",
+       updated_at as "updatedAt"
+     FROM ai_conversations
+     WHERE id = $1 AND user_id = $2;`,
+    [conversationId, userId]
+  );
+
+  if (convRes.rows.length === 0) {
+    return null;
+  }
+
+  const msgRes = await query<AiMessageRecord>(
+    `SELECT 
+       id,
+       conversation_id as "conversationId",
+       role,
+       content,
+       model,
+       is_simulated as "isSimulated",
+       prompt_tokens as "promptTokens",
+       completion_tokens as "completionTokens",
+       total_tokens as "totalTokens",
+       created_at as "createdAt"
+     FROM ai_messages
+     WHERE conversation_id = $1
+     ORDER BY created_at ASC;`,
+    [conversationId]
+  );
+
+  return {
+    conversation: convRes.rows[0],
+    messages: msgRes.rows,
+  };
+}
+
+/**
+ * Updates an AI conversation's title with user ownership enforcement.
+ */
+export async function updateAiConversationTitle(
+  userId: string,
+  conversationId: string,
+  title: string
+): Promise<boolean> {
+  if (activeTestMockStore?.updateAiConversationTitle) {
+    return activeTestMockStore.updateAiConversationTitle(userId, conversationId, title);
+  }
+
+  await ensureAiTables();
+  const trimmed = title.trim();
+  if (!trimmed) return false;
+
+  const res = await query(
+    `UPDATE ai_conversations
+     SET title = $1, updated_at = NOW()
+     WHERE id = $2 AND user_id = $3;`,
+    [trimmed.slice(0, 255), conversationId, userId]
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
+/**
+ * Deletes an AI conversation and cascades deletion of its messages with ownership enforcement.
+ */
+export async function deleteAiConversation(
+  userId: string,
+  conversationId: string
+): Promise<boolean> {
+  if (activeTestMockStore?.deleteAiConversation) {
+    return activeTestMockStore.deleteAiConversation(userId, conversationId);
+  }
+
+  await ensureAiTables();
+  const res = await query(
+    `DELETE FROM ai_conversations
+     WHERE id = $1 AND user_id = $2;`,
+    [conversationId, userId]
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
+/**
+ * Persists a message turn to a conversation, validating that the user owns the conversation.
+ */
+export async function addAiMessage(
+  userId: string,
+  conversationId: string,
+  message: {
+    role: 'user' | 'assistant';
+    content: string;
+    model?: string;
+    isSimulated?: boolean;
+    usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+  }
+): Promise<AiMessageRecord> {
+  if (activeTestMockStore?.addAiMessage) {
+    return activeTestMockStore.addAiMessage(userId, conversationId, message);
+  }
+
+  await ensureAiTables();
+
+  // Validate conversation ownership
+  const check = await query(
+    `SELECT id FROM ai_conversations WHERE id = $1 AND user_id = $2;`,
+    [conversationId, userId]
+  );
+  if (check.rows.length === 0) {
+    throw new Error('Conversation not found or access denied.');
+  }
+
+  const id = crypto.randomUUID();
+  const res = await query<AiMessageRecord>(
+    `INSERT INTO ai_messages
+     (id, conversation_id, role, content, model, is_simulated, prompt_tokens, completion_tokens, total_tokens, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+     RETURNING 
+       id,
+       conversation_id as "conversationId",
+       role,
+       content,
+       model,
+       is_simulated as "isSimulated",
+       prompt_tokens as "promptTokens",
+       completion_tokens as "completionTokens",
+       total_tokens as "totalTokens",
+       created_at as "createdAt";`,
+    [
+      id,
+      conversationId,
+      message.role,
+      message.content,
+      message.model || null,
+      message.isSimulated ?? false,
+      message.usage?.promptTokens || null,
+      message.usage?.completionTokens || null,
+      message.usage?.totalTokens || null,
+    ]
+  );
+
+  // Touch conversation updated_at
+  await query(
+    `UPDATE ai_conversations SET updated_at = NOW() WHERE id = $1;`,
+    [conversationId]
+  );
+
+  return res.rows[0];
+}
+
+export interface UserGeneratedLessonRecord {
+  id: string;
+  userId: string;
+  conversationId: string | null;
+  title: string;
+  topic: string;
+  description: string;
+  difficulty: string;
+  estimatedMinutes: number;
+  tags: string[];
+  prerequisites: string[];
+  learningObjectives: string[];
+  contentJson: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+let userGenLessonsTableEnsured = false;
+
+export async function ensureUserGeneratedLessonsTable(): Promise<void> {
+  if (userGenLessonsTableEnsured) return;
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS "user_generated_lessons" (
+        "id" varchar(36) PRIMARY KEY NOT NULL,
+        "user_id" varchar(36) NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+        "conversation_id" varchar(36) REFERENCES "ai_conversations"("id") ON DELETE SET NULL,
+        "title" varchar(255) NOT NULL,
+        "topic" varchar(255) NOT NULL,
+        "description" text NOT NULL,
+        "difficulty" varchar(32) DEFAULT 'intermediate' NOT NULL,
+        "estimated_minutes" integer DEFAULT 20 NOT NULL,
+        "tags" text DEFAULT '[]' NOT NULL,
+        "prerequisites" text DEFAULT '[]' NOT NULL,
+        "learning_objectives" text DEFAULT '[]' NOT NULL,
+        "content_json" text NOT NULL,
+        "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+        "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS "user_gen_lessons_user_id_idx" ON "user_generated_lessons" ("user_id");
+      CREATE INDEX IF NOT EXISTS "user_gen_lessons_user_updated_idx" ON "user_generated_lessons" ("user_id", "updated_at");
+    `);
+    userGenLessonsTableEnsured = true;
+  } catch (err: any) {
+    console.error('[User Gen Lessons DB Init Warning]:', err?.message);
+  }
+}
+
+/**
+ * Persists a new AI-generated lesson in the user's personal learning library.
+ */
+export async function createUserGeneratedLesson(
+  userId: string,
+  lesson: {
+    id?: string;
+    conversationId?: string | null;
+    title: string;
+    topic: string;
+    description: string;
+    difficulty?: string;
+    estimatedMinutes?: number;
+    tags?: string[];
+    prerequisites?: string[];
+    learningObjectives?: string[];
+    contentJson: string;
+  }
+): Promise<UserGeneratedLessonRecord> {
+  if (activeTestMockStore?.createUserGeneratedLesson) {
+    return activeTestMockStore.createUserGeneratedLesson(userId, lesson);
+  }
+
+  await ensureUserGeneratedLessonsTable();
+  const id = lesson.id || crypto.randomUUID();
+  const difficulty = lesson.difficulty || 'intermediate';
+  const estimatedMinutes = lesson.estimatedMinutes ?? 20;
+  const tagsJson = JSON.stringify(lesson.tags || []);
+  const prereqsJson = JSON.stringify(lesson.prerequisites || []);
+  const objectivesJson = JSON.stringify(lesson.learningObjectives || []);
+
+  const res = await query<any>(
+    `INSERT INTO user_generated_lessons
+     (id, user_id, conversation_id, title, topic, description, difficulty, estimated_minutes, tags, prerequisites, learning_objectives, content_json, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+     RETURNING 
+       id,
+       user_id as "userId",
+       conversation_id as "conversationId",
+       title,
+       topic,
+       description,
+       difficulty,
+       estimated_minutes as "estimatedMinutes",
+       tags,
+       prerequisites,
+       learning_objectives as "learningObjectives",
+       content_json as "contentJson",
+       created_at as "createdAt",
+       updated_at as "updatedAt";`,
+    [
+      id,
+      userId,
+      lesson.conversationId || null,
+      lesson.title.trim().slice(0, 255),
+      lesson.topic.trim().slice(0, 255),
+      lesson.description.trim(),
+      difficulty,
+      estimatedMinutes,
+      tagsJson,
+      prereqsJson,
+      objectivesJson,
+      lesson.contentJson,
+    ]
+  );
+
+  const row = res.rows[0];
+  return {
+    ...row,
+    tags: safeJsonParseArray(row.tags),
+    prerequisites: safeJsonParseArray(row.prerequisites),
+    learningObjectives: safeJsonParseArray(row.learningObjectives),
+  };
+}
+
+/**
+ * Retrieves all generated lessons for a user with optional search and difficulty filtering.
+ */
+export async function getUserGeneratedLessons(
+  userId: string,
+  filter?: { search?: string; difficulty?: string }
+): Promise<UserGeneratedLessonRecord[]> {
+  if (activeTestMockStore?.getUserGeneratedLessons) {
+    return activeTestMockStore.getUserGeneratedLessons(userId, filter);
+  }
+
+  await ensureUserGeneratedLessonsTable();
+
+  let sql = `
+    SELECT 
+      id,
+      user_id as "userId",
+      conversation_id as "conversationId",
+      title,
+      topic,
+      description,
+      difficulty,
+      estimated_minutes as "estimatedMinutes",
+      tags,
+      prerequisites,
+      learning_objectives as "learningObjectives",
+      content_json as "contentJson",
+      created_at as "createdAt",
+      updated_at as "updatedAt"
+    FROM user_generated_lessons
+    WHERE user_id = $1
+  `;
+  const params: any[] = [userId];
+
+  if (filter?.difficulty && filter.difficulty !== 'all') {
+    params.push(filter.difficulty);
+    sql += ` AND difficulty = $${params.length}`;
+  }
+
+  if (filter?.search && filter.search.trim()) {
+    params.push(`%${filter.search.trim().toLowerCase()}%`);
+    sql += ` AND (LOWER(title) LIKE $${params.length} OR LOWER(topic) LIKE $${params.length} OR LOWER(tags) LIKE $${params.length})`;
+  }
+
+  sql += ` ORDER BY updated_at DESC;`;
+
+  const res = await query<any>(sql, params);
+  return res.rows.map((row) => ({
+    ...row,
+    tags: safeJsonParseArray(row.tags),
+    prerequisites: safeJsonParseArray(row.prerequisites),
+    learningObjectives: safeJsonParseArray(row.learningObjectives),
+  }));
+}
+
+/**
+ * Loads a single generated lesson by ID, strictly enforcing user ownership.
+ */
+export async function getUserGeneratedLessonById(
+  userId: string,
+  lessonId: string
+): Promise<UserGeneratedLessonRecord | null> {
+  if (activeTestMockStore?.getUserGeneratedLessonById) {
+    return activeTestMockStore.getUserGeneratedLessonById(userId, lessonId);
+  }
+
+  await ensureUserGeneratedLessonsTable();
+  const res = await query<any>(
+    `SELECT 
+       id,
+       user_id as "userId",
+       conversation_id as "conversationId",
+       title,
+       topic,
+       description,
+       difficulty,
+       estimated_minutes as "estimatedMinutes",
+       tags,
+       prerequisites,
+       learning_objectives as "learningObjectives",
+       content_json as "contentJson",
+       created_at as "createdAt",
+       updated_at as "updatedAt"
+     FROM user_generated_lessons
+     WHERE id = $1 AND user_id = $2;`,
+    [lessonId, userId]
+  );
+
+  if (res.rows.length === 0) return null;
+  const row = res.rows[0];
+  return {
+    ...row,
+    tags: safeJsonParseArray(row.tags),
+    prerequisites: safeJsonParseArray(row.prerequisites),
+    learningObjectives: safeJsonParseArray(row.learningObjectives),
+  };
+}
+
+/**
+ * Updates the title of a generated lesson with strict user ownership enforcement.
+ */
+export async function updateUserGeneratedLessonTitle(
+  userId: string,
+  lessonId: string,
+  title: string
+): Promise<boolean> {
+  if (activeTestMockStore?.updateUserGeneratedLessonTitle) {
+    return activeTestMockStore.updateUserGeneratedLessonTitle(userId, lessonId, title);
+  }
+
+  await ensureUserGeneratedLessonsTable();
+  const trimmed = title.trim();
+  if (!trimmed) return false;
+
+  const res = await query(
+    `UPDATE user_generated_lessons
+     SET title = $1, updated_at = NOW()
+     WHERE id = $2 AND user_id = $3;`,
+    [trimmed.slice(0, 255), lessonId, userId]
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
+/**
+ * Deletes a generated lesson with strict user ownership enforcement.
+ */
+export async function deleteUserGeneratedLesson(
+  userId: string,
+  lessonId: string
+): Promise<boolean> {
+  if (activeTestMockStore?.deleteUserGeneratedLesson) {
+    return activeTestMockStore.deleteUserGeneratedLesson(userId, lessonId);
+  }
+
+  await ensureUserGeneratedLessonsTable();
+  const res = await query(
+    `DELETE FROM user_generated_lessons
+     WHERE id = $1 AND user_id = $2;`,
+    [lessonId, userId]
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
+function safeJsonParseArray(val: unknown): string[] {
+  if (Array.isArray(val)) return val;
+  if (typeof val === 'string') {
+    try {
+      const parsed = JSON.parse(val);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {}
+  }
+  return [];
+}
+
+let userQuizzesTablesEnsured = false;
+
+export async function ensureUserQuizzesTables(): Promise<void> {
+  if (userQuizzesTablesEnsured) return;
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS "user_quizzes" (
+        "id" varchar(36) PRIMARY KEY NOT NULL,
+        "user_id" varchar(36) NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+        "lesson_id" varchar(36) REFERENCES "user_generated_lessons"("id") ON DELETE SET NULL,
+        "title" varchar(255) NOT NULL,
+        "topic" varchar(255) NOT NULL,
+        "difficulty" varchar(32) DEFAULT 'medium' NOT NULL,
+        "question_count" integer NOT NULL,
+        "question_types" text DEFAULT '["single_choice"]' NOT NULL,
+        "questions_json" text NOT NULL,
+        "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+        "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS "user_quizzes_user_id_idx" ON "user_quizzes" ("user_id");
+      CREATE INDEX IF NOT EXISTS "user_quizzes_lesson_id_idx" ON "user_quizzes" ("lesson_id");
+      CREATE INDEX IF NOT EXISTS "user_quizzes_user_updated_idx" ON "user_quizzes" ("user_id", "updated_at");
+
+      CREATE TABLE IF NOT EXISTS "quiz_attempts" (
+        "id" varchar(36) PRIMARY KEY NOT NULL,
+        "quiz_id" varchar(36) NOT NULL REFERENCES "user_quizzes"("id") ON DELETE CASCADE,
+        "user_id" varchar(36) NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+        "score" integer NOT NULL,
+        "total_questions" integer NOT NULL,
+        "percentage" integer NOT NULL,
+        "time_taken_seconds" integer,
+        "answers_json" text NOT NULL,
+        "results_json" text NOT NULL,
+        "completed_at" timestamp with time zone DEFAULT now() NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS "quiz_attempts_quiz_id_idx" ON "quiz_attempts" ("quiz_id");
+      CREATE INDEX IF NOT EXISTS "quiz_attempts_user_id_idx" ON "quiz_attempts" ("user_id");
+      CREATE INDEX IF NOT EXISTS "quiz_attempts_user_completed_idx" ON "quiz_attempts" ("user_id", "completed_at");
+    `);
+    userQuizzesTablesEnsured = true;
+  } catch (err: any) {
+    console.warn('[DB Init Warning]: Failed to ensure user_quizzes tables:', err?.message);
+  }
+}
+
+export interface UserQuizRecord {
+  id: string;
+  userId: string;
+  lessonId: string | null;
+  title: string;
+  topic: string;
+  difficulty: 'easy' | 'medium' | 'hard';
+  questionCount: number;
+  questionTypes: string[];
+  questionsJson: string;
+  createdAt: string;
+  updatedAt: string;
+  latestAttempt?: {
+    id: string;
+    score: number;
+    totalQuestions: number;
+    percentage: number;
+    completedAt: string;
+  } | null;
+}
+
+export interface QuizAttemptRecord {
+  id: string;
+  quizId: string;
+  userId: string;
+  score: number;
+  totalQuestions: number;
+  percentage: number;
+  timeTakenSeconds?: number;
+  answersJson: string;
+  resultsJson: string;
+  answers?: Record<string, any>;
+  results?: any[];
+  completedAt: string;
+}
+
+/**
+ * Creates and persists a generated quiz for a user.
+ */
+export async function createUserQuiz(
+  userId: string,
+  quiz: {
+    id?: string;
+    lessonId?: string | null;
+    title: string;
+    topic: string;
+    difficulty?: string;
+    questionCount: number;
+    questionTypes: string[];
+    questionsJson: string;
+  }
+): Promise<UserQuizRecord> {
+  if (activeTestMockStore?.createUserQuiz) {
+    return activeTestMockStore.createUserQuiz(userId, quiz);
+  }
+
+  await ensureUserQuizzesTables();
+  const id = quiz.id || crypto.randomUUID();
+  const difficulty = (quiz.difficulty || 'medium').toLowerCase();
+  const questionTypesJson = JSON.stringify(quiz.questionTypes || ['single_choice']);
+
+  const res = await query<any>(
+    `INSERT INTO user_quizzes
+     (id, user_id, lesson_id, title, topic, difficulty, question_count, question_types, questions_json, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+     RETURNING 
+       id,
+       user_id as "userId",
+       lesson_id as "lessonId",
+       title,
+       topic,
+       difficulty,
+       question_count as "questionCount",
+       question_types as "questionTypes",
+       questions_json as "questionsJson",
+       created_at as "createdAt",
+       updated_at as "updatedAt";`,
+    [
+      id,
+      userId,
+      quiz.lessonId || null,
+      quiz.title.slice(0, 255),
+      quiz.topic.slice(0, 255),
+      difficulty,
+      quiz.questionCount,
+      questionTypesJson,
+      quiz.questionsJson,
+    ]
+  );
+
+  const row = res.rows[0];
+  return {
+    ...row,
+    questionTypes: safeJsonParseArray(row.questionTypes),
+    createdAt: row.createdAt?.toISOString?.() || String(row.createdAt),
+    updatedAt: row.updatedAt?.toISOString?.() || String(row.updatedAt),
+  };
+}
+
+/**
+ * Retrieves all quizzes for a user with optional search and difficulty filtering.
+ */
+export async function getUserQuizzes(
+  userId: string,
+  filter?: { search?: string; difficulty?: string; lessonId?: string }
+): Promise<UserQuizRecord[]> {
+  if (activeTestMockStore?.getUserQuizzes) {
+    return activeTestMockStore.getUserQuizzes(userId, filter);
+  }
+
+  await ensureUserQuizzesTables();
+
+  let sql = `
+    SELECT 
+      q.id,
+      q.user_id as "userId",
+      q.lesson_id as "lessonId",
+      q.title,
+      q.topic,
+      q.difficulty,
+      q.question_count as "questionCount",
+      q.question_types as "questionTypes",
+      q.questions_json as "questionsJson",
+      q.created_at as "createdAt",
+      q.updated_at as "updatedAt",
+      a.id as "attemptId",
+      a.score as "attemptScore",
+      a.total_questions as "attemptTotal",
+      a.percentage as "attemptPercentage",
+      a.completed_at as "attemptCompletedAt"
+    FROM user_quizzes q
+    LEFT JOIN LATERAL (
+      SELECT id, score, total_questions, percentage, completed_at
+      FROM quiz_attempts
+      WHERE quiz_id = q.id AND user_id = $1
+      ORDER BY completed_at DESC
+      LIMIT 1
+    ) a ON true
+    WHERE q.user_id = $1
+  `;
+  const params: any[] = [userId];
+
+  if (filter?.lessonId) {
+    params.push(filter.lessonId);
+    sql += ` AND q.lesson_id = $${params.length}`;
+  }
+
+  if (filter?.difficulty && filter.difficulty !== 'all') {
+    params.push(filter.difficulty.toLowerCase());
+    sql += ` AND LOWER(q.difficulty) = $${params.length}`;
+  }
+
+  if (filter?.search && filter.search.trim()) {
+    params.push(`%${filter.search.trim()}%`);
+    sql += ` AND (q.title ILIKE $${params.length} OR q.topic ILIKE $${params.length})`;
+  }
+
+  sql += ` ORDER BY q.updated_at DESC;`;
+
+  const res = await query<any>(sql, params);
+  return res.rows.map((row) => ({
+    id: row.id,
+    userId: row.userId,
+    lessonId: row.lessonId,
+    title: row.title,
+    topic: row.topic,
+    difficulty: row.difficulty,
+    questionCount: row.questionCount,
+    questionTypes: safeJsonParseArray(row.questionTypes),
+    questionsJson: row.questionsJson,
+    createdAt: row.createdAt?.toISOString?.() || String(row.createdAt),
+    updatedAt: row.updatedAt?.toISOString?.() || String(row.updatedAt),
+    latestAttempt: row.attemptId
+      ? {
+          id: row.attemptId,
+          score: row.attemptScore,
+          totalQuestions: row.attemptTotal,
+          percentage: row.attemptPercentage,
+          completedAt: row.attemptCompletedAt?.toISOString?.() || String(row.attemptCompletedAt),
+        }
+      : null,
+  }));
+}
+
+/**
+ * Retrieves a single quiz by ID, strictly scoped to the authenticated user.
+ */
+export async function getUserQuizById(
+  userId: string,
+  quizId: string
+): Promise<UserQuizRecord | null> {
+  if (activeTestMockStore?.getUserQuizById) {
+    return activeTestMockStore.getUserQuizById(userId, quizId);
+  }
+
+  await ensureUserQuizzesTables();
+  const res = await query<any>(
+    `SELECT 
+       q.id,
+       q.user_id as "userId",
+       q.lesson_id as "lessonId",
+       q.title,
+       q.topic,
+       q.difficulty,
+       q.question_count as "questionCount",
+       q.question_types as "questionTypes",
+       q.questions_json as "questionsJson",
+       q.created_at as "createdAt",
+       q.updated_at as "updatedAt",
+       a.id as "attemptId",
+       a.score as "attemptScore",
+       a.total_questions as "attemptTotal",
+       a.percentage as "attemptPercentage",
+       a.completed_at as "attemptCompletedAt"
+     FROM user_quizzes q
+     LEFT JOIN LATERAL (
+       SELECT id, score, total_questions, percentage, completed_at
+       FROM quiz_attempts
+       WHERE quiz_id = q.id AND user_id = $1
+       ORDER BY completed_at DESC
+       LIMIT 1
+     ) a ON true
+     WHERE q.id = $2 AND q.user_id = $1;`,
+    [userId, quizId]
+  );
+
+  if (res.rows.length === 0) return null;
+  const row = res.rows[0];
+  return {
+    id: row.id,
+    userId: row.userId,
+    lessonId: row.lessonId,
+    title: row.title,
+    topic: row.topic,
+    difficulty: row.difficulty,
+    questionCount: row.questionCount,
+    questionTypes: safeJsonParseArray(row.questionTypes),
+    questionsJson: row.questionsJson,
+    createdAt: row.createdAt?.toISOString?.() || String(row.createdAt),
+    updatedAt: row.updatedAt?.toISOString?.() || String(row.updatedAt),
+    latestAttempt: row.attemptId
+      ? {
+          id: row.attemptId,
+          score: row.attemptScore,
+          totalQuestions: row.attemptTotal,
+          percentage: row.attemptPercentage,
+          completedAt: row.attemptCompletedAt?.toISOString?.() || String(row.attemptCompletedAt),
+        }
+      : null,
+  };
+}
+
+/**
+ * Updates a question's text or options within a saved quiz, verifying answer-key consistency.
+ */
+export async function updateQuizQuestion(
+  userId: string,
+  quizId: string,
+  questionId: string,
+  updates: { question?: string; options?: Array<{ id: string; text: string }>; scenarioContext?: string }
+): Promise<boolean> {
+  if (activeTestMockStore?.updateQuizQuestion) {
+    return activeTestMockStore.updateQuizQuestion(userId, quizId, questionId, updates);
+  }
+
+  const quiz = await getUserQuizById(userId, quizId);
+  if (!quiz) return false;
+
+  let questions: any[] = [];
+  try {
+    questions = JSON.parse(quiz.questionsJson);
+  } catch {
+    return false;
+  }
+
+  const qIndex = questions.findIndex((q) => q.id === questionId);
+  if (qIndex === -1) return false;
+
+  const target = questions[qIndex];
+
+  // If question text updated
+  if (typeof updates.question === 'string' && updates.question.trim()) {
+    target.question = updates.question.trim().slice(0, 1000);
+  }
+
+  if (typeof updates.scenarioContext === 'string') {
+    target.scenarioContext = updates.scenarioContext.trim().slice(0, 2000);
+  }
+
+  // If options updated, verify answer key consistency
+  if (Array.isArray(updates.options) && updates.options.length >= 2) {
+    const newOptionIds = new Set(updates.options.map((o) => o.id));
+
+    // Verify existing correctAnswer remains valid
+    if (typeof target.correctAnswer === 'string') {
+      if (!newOptionIds.has(target.correctAnswer)) {
+        throw new Error(`Cannot update options: existing correct answer "${target.correctAnswer}" was removed.`);
+      }
+    } else if (Array.isArray(target.correctAnswer)) {
+      const allFound = target.correctAnswer.every((ans: string) => newOptionIds.has(ans));
+      if (!allFound) {
+        throw new Error('Cannot update options: one or more correct answer option IDs were removed.');
+      }
+    }
+
+    target.options = updates.options;
+  }
+
+  questions[qIndex] = target;
+
+  const res = await query(
+    `UPDATE user_quizzes
+     SET questions_json = $1, updated_at = NOW()
+     WHERE id = $2 AND user_id = $3;`,
+    [JSON.stringify(questions), quizId, userId]
+  );
+
+  return (res.rowCount ?? 0) > 0;
+}
+
+/**
+ * Deletes a quiz and all associated attempts with strict user ownership enforcement.
+ */
+export async function deleteUserQuiz(
+  userId: string,
+  quizId: string
+): Promise<boolean> {
+  if (activeTestMockStore?.deleteUserQuiz) {
+    return activeTestMockStore.deleteUserQuiz(userId, quizId);
+  }
+
+  await ensureUserQuizzesTables();
+  const res = await query(
+    `DELETE FROM user_quizzes
+     WHERE id = $1 AND user_id = $2;`,
+    [quizId, userId]
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
+/**
+ * Records a scored quiz attempt.
+ */
+export async function recordQuizAttempt(
+  userId: string,
+  quizId: string,
+  attempt: {
+    id?: string;
+    score: number;
+    totalQuestions: number;
+    percentage: number;
+    timeTakenSeconds?: number;
+    answersJson: string;
+    resultsJson: string;
+  }
+): Promise<QuizAttemptRecord> {
+  if (activeTestMockStore?.recordQuizAttempt) {
+    return activeTestMockStore.recordQuizAttempt(userId, quizId, attempt);
+  }
+
+  await ensureUserQuizzesTables();
+  const id = attempt.id || crypto.randomUUID();
+
+  const res = await query<any>(
+    `INSERT INTO quiz_attempts
+     (id, quiz_id, user_id, score, total_questions, percentage, time_taken_seconds, answers_json, results_json, completed_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+     RETURNING 
+       id,
+       quiz_id as "quizId",
+       user_id as "userId",
+       score,
+       total_questions as "totalQuestions",
+       percentage,
+       time_taken_seconds as "timeTakenSeconds",
+       answers_json as "answersJson",
+       results_json as "resultsJson",
+       completed_at as "completedAt";`,
+    [
+      id,
+      quizId,
+      userId,
+      attempt.score,
+      attempt.totalQuestions,
+      attempt.percentage,
+      attempt.timeTakenSeconds || null,
+      attempt.answersJson,
+      attempt.resultsJson,
+    ]
+  );
+
+  const row = res.rows[0];
+  return {
+    ...row,
+    completedAt: row.completedAt?.toISOString?.() || String(row.completedAt),
+  };
+}
+
+/**
+ * Retrieves all completed attempts for a quiz, ordered by most recent first.
+ */
+export async function getQuizAttempts(
+  userId: string,
+  quizId: string
+): Promise<QuizAttemptRecord[]> {
+  if (activeTestMockStore?.getQuizAttempts) {
+    return activeTestMockStore.getQuizAttempts(userId, quizId);
+  }
+
+  await ensureUserQuizzesTables();
+  const res = await query<any>(
+    `SELECT 
+       id,
+       quiz_id as "quizId",
+       user_id as "userId",
+       score,
+       total_questions as "totalQuestions",
+       percentage,
+       time_taken_seconds as "timeTakenSeconds",
+       answers_json as "answersJson",
+       results_json as "resultsJson",
+       completed_at as "completedAt"
+     FROM quiz_attempts
+     WHERE quiz_id = $1 AND user_id = $2
+     ORDER BY completed_at DESC;`,
+    [quizId, userId]
+  );
+
+  return res.rows.map((row) => ({
+    ...row,
+    completedAt: row.completedAt?.toISOString?.() || String(row.completedAt),
+  }));
+}
+
+/**
+ * Retrieves a single quiz attempt by ID with full itemized breakdown.
+ */
+export async function getQuizAttemptById(
+  userId: string,
+  attemptId: string
+): Promise<QuizAttemptRecord | null> {
+  if (activeTestMockStore?.getQuizAttemptById) {
+    return activeTestMockStore.getQuizAttemptById(userId, attemptId);
+  }
+
+  await ensureUserQuizzesTables();
+  const res = await query<any>(
+    `SELECT 
+       id,
+       quiz_id as "quizId",
+       user_id as "userId",
+       score,
+       total_questions as "totalQuestions",
+       percentage,
+       time_taken_seconds as "timeTakenSeconds",
+       answers_json as "answersJson",
+       results_json as "resultsJson",
+       completed_at as "completedAt"
+     FROM quiz_attempts
+     WHERE id = $1 AND user_id = $2;`,
+    [attemptId, userId]
+  );
+
+  if (res.rows.length === 0) return null;
+  const row = res.rows[0];
+  let results: any[] = [];
+  if (row.resultsJson) {
+    try {
+      results = JSON.parse(row.resultsJson);
+    } catch {}
+  }
+  let answers: any = {};
+  if (row.answersJson) {
+    try {
+      answers = JSON.parse(row.answersJson);
+    } catch {}
+  }
+
+  return {
+    ...row,
+    results,
+    answers,
+    completedAt: row.completedAt?.toISOString?.() || String(row.completedAt),
+  };
+}
+
+/**
+ * Retrieves the quiz linked to a specific user-generated lesson.
+ */
+export async function getLessonQuiz(
+  userId: string,
+  lessonId: string
+): Promise<UserQuizRecord | null> {
+  if (activeTestMockStore?.getLessonQuiz) {
+    return activeTestMockStore.getLessonQuiz(userId, lessonId);
+  }
+
+  await ensureUserQuizzesTables();
+  const res = await query<any>(
+    `SELECT 
+       q.id,
+       q.user_id as "userId",
+       q.lesson_id as "lessonId",
+       q.title,
+       q.topic,
+       q.difficulty,
+       q.question_count as "questionCount",
+       q.question_types as "questionTypes",
+       q.questions_json as "questionsJson",
+       q.created_at as "createdAt",
+       q.updated_at as "updatedAt",
+       a.id as "attemptId",
+       a.score as "attemptScore",
+       a.total_questions as "attemptTotal",
+       a.percentage as "attemptPercentage",
+       a.completed_at as "attemptCompletedAt"
+     FROM user_quizzes q
+     LEFT JOIN LATERAL (
+       SELECT id, score, total_questions, percentage, completed_at
+       FROM quiz_attempts
+       WHERE quiz_id = q.id AND user_id = $1
+       ORDER BY completed_at DESC
+       LIMIT 1
+     ) a ON true
+     WHERE q.lesson_id = $2 AND q.user_id = $1
+     ORDER BY q.updated_at DESC
+     LIMIT 1;`,
+    [userId, lessonId]
+  );
+
+  if (res.rows.length === 0) return null;
+  const row = res.rows[0];
+  return {
+    id: row.id,
+    userId: row.userId,
+    lessonId: row.lessonId,
+    title: row.title,
+    topic: row.topic,
+    difficulty: row.difficulty,
+    questionCount: row.questionCount,
+    questionTypes: safeJsonParseArray(row.questionTypes),
+    questionsJson: row.questionsJson,
+    createdAt: row.createdAt?.toISOString?.() || String(row.createdAt),
+    updatedAt: row.updatedAt?.toISOString?.() || String(row.updatedAt),
+    latestAttempt: row.attemptId
+      ? {
+          id: row.attemptId,
+          score: row.attemptScore,
+          totalQuestions: row.attemptTotal,
+          percentage: row.attemptPercentage,
+          completedAt: row.attemptCompletedAt?.toISOString?.() || String(row.attemptCompletedAt),
+        }
+      : null,
+  };
+}
+
+// ============================================================================
+// Generation Tasks Database Layer (Persistent Background AI Generation)
+// ============================================================================
+
+export interface GenerationTaskRecord {
+  id: string;
+  userId: string;
+  taskType: 'lesson' | 'quiz' | 'flashcards';
+  status: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
+  currentStage: 'queued' | 'prompting_ai' | 'validating_schema' | 'persisting';
+  title: string;
+  topic: string;
+  difficulty: string;
+  idempotencyKey: string;
+  inputParamsJson: string;
+  resultDataJson?: string | null;
+  persistedEntityId?: string | null;
+  errorMessage?: string | null;
+  errorCategory?: string | null;
+  isRetryable: boolean;
+  executionDeadlineAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string | null;
+}
+
+let generationTasksTableEnsured = false;
+
+export async function ensureGenerationTasksTable(): Promise<void> {
+  if (generationTasksTableEnsured) return;
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS "generation_tasks" (
+        "id" varchar(36) PRIMARY KEY NOT NULL,
+        "user_id" varchar(36) NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+        "task_type" varchar(32) NOT NULL,
+        "status" varchar(20) DEFAULT 'queued' NOT NULL,
+        "current_stage" varchar(32) DEFAULT 'queued' NOT NULL,
+        "title" varchar(255) NOT NULL,
+        "topic" varchar(255) NOT NULL,
+        "difficulty" varchar(32) DEFAULT 'intermediate' NOT NULL,
+        "idempotency_key" varchar(64) NOT NULL,
+        "input_params_json" text NOT NULL,
+        "result_data_json" text,
+        "persisted_entity_id" varchar(36),
+        "error_message" text,
+        "error_category" varchar(64),
+        "is_retryable" boolean DEFAULT true NOT NULL,
+        "execution_deadline_at" timestamp with time zone,
+        "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+        "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+        "completed_at" timestamp with time zone
+      );
+      CREATE INDEX IF NOT EXISTS "generation_tasks_user_id_idx" ON "generation_tasks" ("user_id");
+      CREATE INDEX IF NOT EXISTS "generation_tasks_user_status_idx" ON "generation_tasks" ("user_id", "status");
+      CREATE INDEX IF NOT EXISTS "generation_tasks_created_idx" ON "generation_tasks" ("created_at");
+      CREATE INDEX IF NOT EXISTS "generation_tasks_active_deadline_idx" ON "generation_tasks" ("status", "execution_deadline_at");
+      CREATE UNIQUE INDEX IF NOT EXISTS "generation_tasks_active_idempotency_idx" ON "generation_tasks" ("user_id", "idempotency_key") WHERE "status" IN ('queued', 'processing');
+    `);
+    generationTasksTableEnsured = true;
+  } catch (err: any) {
+    console.warn('[DB Init Warning]: Failed to ensure generation_tasks table:', err?.message);
+  }
+}
+
+/**
+ * Serverless function execution ceiling configured in vercel.json.
+ * Fluid Compute enforces maxDuration as a hard limit beyond which functions are killed.
+ */
+export const MAX_FUNCTION_DURATION_SECONDS = 60;
+
+/**
+ * Safety buffer reserved for schema validation, database persistence, and graceful error handling.
+ */
+export const TASK_SAFETY_BUFFER_SECONDS = 10;
+
+/**
+ * Default execution window allocated for an active running generation task (50 seconds).
+ * Guarantees at least 10s headroom before the 60s Vercel container ceiling is hit.
+ */
+export const DEFAULT_TASK_EXECUTION_BUDGET_SECONDS = MAX_FUNCTION_DURATION_SECONDS - TASK_SAFETY_BUFFER_SECONDS; // 50s
+
+/**
+ * Maximum duration a task can remain in 'queued' status before being deemed abandoned by a worker.
+ */
+export const DEFAULT_QUEUE_TIMEOUT_SECONDS = 180; // 3 minutes
+
+/**
+ * Resolves the bounded execution deadline for AI generation tasks.
+ * Hierarchy:
+ * 1. process.env.AI_TASK_DEADLINE_SECONDS (clamped between 15s and 55s, strictly below MAX_FUNCTION_DURATION_SECONDS)
+ * 2. 50 seconds (safe default ensuring 10s headroom within the 60s Vercel function limit)
+ */
+export function getTaskExecutionDeadlineSeconds(): number {
+  const envVal = process.env.AI_TASK_DEADLINE_SECONDS;
+  if (envVal) {
+    const parsed = parseInt(envVal, 10);
+    if (!isNaN(parsed)) {
+      // Strictly clamp: minimum 15s, maximum 55s (never exceed 60s function limit)
+      return Math.min(Math.max(parsed, 15), MAX_FUNCTION_DURATION_SECONDS - 5);
+    }
+  }
+  return DEFAULT_TASK_EXECUTION_BUDGET_SECONDS;
+}
+
+/**
+ * Creates a new generation task with atomic idempotency prevention.
+ * Strictly adheres to the lifecycle: newly created tasks begin in 'queued' status.
+ * If an active task with the exact same idempotency key exists and has not timed out,
+ * returns the existing task with alreadyExists = true.
+ */
+export async function createGenerationTask(
+  userId: string,
+  task: {
+    id?: string;
+    taskType: 'lesson' | 'quiz' | 'flashcards';
+    title: string;
+    topic: string;
+    difficulty?: string;
+    idempotencyKey: string;
+    inputParams: Record<string, any>;
+    deadlineSeconds?: number;
+    queueTimeoutSeconds?: number;
+  }
+): Promise<{ task: GenerationTaskRecord; alreadyExists: boolean }> {
+  if (activeTestMockStore?.createGenerationTask) {
+    return activeTestMockStore.createGenerationTask(userId, task);
+  }
+
+  await ensureGenerationTasksTable();
+
+  // 1. Check for existing active in-flight task that has not expired
+  const existingRes = await query<any>(
+    `SELECT 
+       id, user_id as "userId", task_type as "taskType", status, current_stage as "currentStage",
+       title, topic, difficulty, idempotency_key as "idempotencyKey",
+       input_params_json as "inputParamsJson", result_data_json as "resultDataJson",
+       persisted_entity_id as "persistedEntityId", error_message as "errorMessage",
+       error_category as "errorCategory", is_retryable as "isRetryable",
+       execution_deadline_at as "executionDeadlineAt",
+       created_at as "createdAt", updated_at as "updatedAt", completed_at as "completedAt"
+     FROM generation_tasks
+     WHERE user_id = $1 AND idempotency_key = $2 AND status IN ('queued', 'processing')
+       AND (execution_deadline_at IS NULL OR execution_deadline_at > NOW())
+     ORDER BY created_at DESC
+     LIMIT 1;`,
+    [userId, task.idempotencyKey]
+  );
+
+  if (existingRes.rows.length > 0) {
+    const row = existingRes.rows[0];
+    return {
+      task: {
+        ...row,
+        createdAt: row.createdAt?.toISOString?.() || String(row.createdAt),
+        updatedAt: row.updatedAt?.toISOString?.() || String(row.updatedAt),
+        executionDeadlineAt: row.executionDeadlineAt?.toISOString?.() || (row.executionDeadlineAt ? String(row.executionDeadlineAt) : null),
+        completedAt: row.completedAt?.toISOString?.() || (row.completedAt ? String(row.completedAt) : null),
+      },
+      alreadyExists: true,
+    };
+  }
+
+  const taskId = task.id || crypto.randomUUID();
+  const queueTimeout = task.queueTimeoutSeconds && task.queueTimeoutSeconds >= 30
+    ? task.queueTimeoutSeconds
+    : DEFAULT_QUEUE_TIMEOUT_SECONDS;
+  const difficulty = (task.difficulty || 'intermediate').toLowerCase();
+  const inputParamsJson = JSON.stringify(task.inputParams);
+
+  try {
+    const insertRes = await query<any>(
+      `INSERT INTO generation_tasks (
+         id, user_id, task_type, status, current_stage, title, topic, difficulty,
+         idempotency_key, input_params_json, is_retryable, execution_deadline_at,
+         created_at, updated_at
+       )
+       VALUES (
+         $1, $2, $3, 'queued', 'queued', $4, $5, $6,
+         $7, $8, true, NOW() + ($9 || ' seconds')::INTERVAL,
+         NOW(), NOW()
+       )
+       RETURNING 
+         id, user_id as "userId", task_type as "taskType", status, current_stage as "currentStage",
+         title, topic, difficulty, idempotency_key as "idempotencyKey",
+         input_params_json as "inputParamsJson", result_data_json as "resultDataJson",
+         persisted_entity_id as "persistedEntityId", error_message as "errorMessage",
+         error_category as "errorCategory", is_retryable as "isRetryable",
+         execution_deadline_at as "executionDeadlineAt",
+         created_at as "createdAt", updated_at as "updatedAt", completed_at as "completedAt";`,
+      [
+        taskId,
+        userId,
+        task.taskType,
+        task.title,
+        task.topic,
+        difficulty,
+        task.idempotencyKey,
+        inputParamsJson,
+        String(queueTimeout),
+      ]
+    );
+
+    const row = insertRes.rows[0];
+    return {
+      task: {
+        ...row,
+        createdAt: row.createdAt?.toISOString?.() || String(row.createdAt),
+        updatedAt: row.updatedAt?.toISOString?.() || String(row.updatedAt),
+        executionDeadlineAt: row.executionDeadlineAt?.toISOString?.() || (row.executionDeadlineAt ? String(row.executionDeadlineAt) : null),
+        completedAt: row.completedAt?.toISOString?.() || (row.completedAt ? String(row.completedAt) : null),
+      },
+      alreadyExists: false,
+    };
+  } catch (err: any) {
+    // If unique constraint violation occurred due to concurrent collision, return existing active task
+    if (err?.code === '23505' || err?.message?.includes('duplicate key') || err?.message?.includes('unique')) {
+      const raceExistingRes = await query<any>(
+        `SELECT 
+           id, user_id as "userId", task_type as "taskType", status, current_stage as "currentStage",
+           title, topic, difficulty, idempotency_key as "idempotencyKey",
+           input_params_json as "inputParamsJson", result_data_json as "resultDataJson",
+           persisted_entity_id as "persistedEntityId", error_message as "errorMessage",
+           error_category as "errorCategory", is_retryable as "isRetryable",
+           execution_deadline_at as "executionDeadlineAt",
+           created_at as "createdAt", updated_at as "updatedAt", completed_at as "completedAt"
+         FROM generation_tasks
+         WHERE user_id = $1 AND idempotency_key = $2 AND status IN ('queued', 'processing')
+         ORDER BY created_at DESC
+         LIMIT 1;`,
+        [userId, task.idempotencyKey]
+      );
+      if (raceExistingRes.rows.length > 0) {
+        const row = raceExistingRes.rows[0];
+        return {
+          task: {
+            ...row,
+            createdAt: row.createdAt?.toISOString?.() || String(row.createdAt),
+            updatedAt: row.updatedAt?.toISOString?.() || String(row.updatedAt),
+            executionDeadlineAt: row.executionDeadlineAt?.toISOString?.() || (row.executionDeadlineAt ? String(row.executionDeadlineAt) : null),
+            completedAt: row.completedAt?.toISOString?.() || (row.completedAt ? String(row.completedAt) : null),
+          },
+          alreadyExists: true,
+        };
+      }
+    }
+    throw err;
+  }
+}
+
+/**
+ * Explicit lifecycle transition: transitions an active task from 'queued' to 'processing'.
+ * Atomic guard: ONLY transitions if the task is currently in 'queued' status.
+ * If user cancelled while queued, this returns false so execution does not start.
+ * 
+ * Crucially: Sets/resets execution_deadline_at to NOW() + executionBudgetSeconds (default 50s),
+ * ensuring queue waiting time does not consume the task's active execution budget.
+ */
+export async function startGenerationTaskProcessing(
+  taskId: string,
+  stage: 'prompting_ai' = 'prompting_ai',
+  executionBudgetSeconds: number = getTaskExecutionDeadlineSeconds()
+): Promise<boolean> {
+  if (activeTestMockStore?.startGenerationTaskProcessing) {
+    return activeTestMockStore.startGenerationTaskProcessing(taskId, stage, executionBudgetSeconds);
+  }
+
+  await ensureGenerationTasksTable();
+
+  // Clamp budget so it never exceeds serverless function limits
+  const clampedBudget = Math.min(
+    Math.max(executionBudgetSeconds, 15),
+    MAX_FUNCTION_DURATION_SECONDS - 5
+  );
+
+  const res = await query(
+    `UPDATE generation_tasks
+     SET status = 'processing',
+         current_stage = $1,
+         execution_deadline_at = NOW() + ($2 || ' seconds')::INTERVAL,
+         updated_at = NOW()
+     WHERE id = $3 AND status = 'queued';`,
+    [stage, String(clampedBudget), taskId]
+  );
+
+  return (res.rowCount ?? 0) > 0;
+}
+
+/**
+ * Retrieves a generation task by ID for an authenticated user.
+ * Self-heals tasks that have exceeded their execution deadline by marking them failed.
+ */
+export async function getGenerationTaskById(
+  userId: string,
+  taskId: string
+): Promise<GenerationTaskRecord | null> {
+  if (activeTestMockStore?.getGenerationTaskById) {
+    return activeTestMockStore.getGenerationTaskById(userId, taskId);
+  }
+
+  await ensureGenerationTasksTable();
+
+  const res = await query<any>(
+    `SELECT 
+       id, user_id as "userId", task_type as "taskType", status, current_stage as "currentStage",
+       title, topic, difficulty, idempotency_key as "idempotencyKey",
+       input_params_json as "inputParamsJson", result_data_json as "resultDataJson",
+       persisted_entity_id as "persistedEntityId", error_message as "errorMessage",
+       error_category as "errorCategory", is_retryable as "isRetryable",
+       execution_deadline_at as "executionDeadlineAt",
+       created_at as "createdAt", updated_at as "updatedAt", completed_at as "completedAt"
+     FROM generation_tasks
+     WHERE id = $1 AND user_id = $2;`,
+    [taskId, userId]
+  );
+
+  if (res.rows.length === 0) return null;
+  const row = res.rows[0];
+
+  // Self-heal: If task is in 'queued' or 'processing' but execution deadline has passed, mark as failed
+  if (
+    (row.status === 'queued' || row.status === 'processing') &&
+    row.executionDeadlineAt &&
+    new Date(row.executionDeadlineAt) < new Date()
+  ) {
+    const isQueued = row.status === 'queued';
+    const failureMsg = isQueued
+      ? 'The generation task timed out while waiting in the queue. You may retry.'
+      : 'The generation task exceeded its execution deadline and timed out. You may retry.';
+
+    await query(
+      `UPDATE generation_tasks
+       SET status = 'failed',
+           error_message = $1,
+           error_category = 'timeout',
+           is_retryable = true,
+           completed_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $2 AND status IN ('queued', 'processing');`,
+      [failureMsg, taskId]
+    );
+
+    return {
+      ...row,
+      status: 'failed',
+      errorMessage: failureMsg,
+      errorCategory: 'timeout',
+      isRetryable: true,
+      completedAt: new Date().toISOString(),
+      createdAt: row.createdAt?.toISOString?.() || String(row.createdAt),
+      updatedAt: new Date().toISOString(),
+      executionDeadlineAt: row.executionDeadlineAt?.toISOString?.() || String(row.executionDeadlineAt),
+    };
+  }
+
+  return {
+    ...row,
+    createdAt: row.createdAt?.toISOString?.() || String(row.createdAt),
+    updatedAt: row.updatedAt?.toISOString?.() || String(row.updatedAt),
+    executionDeadlineAt: row.executionDeadlineAt?.toISOString?.() || (row.executionDeadlineAt ? String(row.executionDeadlineAt) : null),
+    completedAt: row.completedAt?.toISOString?.() || (row.completedAt ? String(row.completedAt) : null),
+  };
+}
+
+/**
+ * Retrieves all active (queued or processing) generation tasks for an authenticated user.
+ */
+export async function getUserActiveGenerationTasks(userId: string): Promise<GenerationTaskRecord[]> {
+  if (activeTestMockStore?.getUserActiveGenerationTasks) {
+    return activeTestMockStore.getUserActiveGenerationTasks(userId);
+  }
+
+  await ensureGenerationTasksTable();
+
+  // Self-heal any expired tasks for this user before retrieving active list
+  await query(
+    `UPDATE generation_tasks
+     SET status = 'failed',
+         error_message = CASE WHEN status = 'queued' THEN 'The generation task timed out while waiting in the queue. You may retry.' ELSE 'The generation task exceeded its execution deadline and timed out. You may retry.' END,
+         error_category = 'timeout',
+         is_retryable = true,
+         completed_at = NOW(),
+         updated_at = NOW()
+     WHERE user_id = $1 AND status IN ('queued', 'processing')
+       AND execution_deadline_at IS NOT NULL AND execution_deadline_at < NOW();`,
+    [userId]
+  );
+
+  const res = await query<any>(
+    `SELECT 
+       id, user_id as "userId", task_type as "taskType", status, current_stage as "currentStage",
+       title, topic, difficulty, idempotency_key as "idempotencyKey",
+       input_params_json as "inputParamsJson", result_data_json as "resultDataJson",
+       persisted_entity_id as "persistedEntityId", error_message as "errorMessage",
+       error_category as "errorCategory", is_retryable as "isRetryable",
+       execution_deadline_at as "executionDeadlineAt",
+       created_at as "createdAt", updated_at as "updatedAt", completed_at as "completedAt"
+     FROM generation_tasks
+     WHERE user_id = $1 AND status IN ('queued', 'processing')
+       AND (execution_deadline_at IS NULL OR execution_deadline_at > NOW())
+     ORDER BY created_at DESC
+     LIMIT 5;`,
+    [userId]
+  );
+
+  return res.rows.map((row) => ({
+    ...row,
+    createdAt: row.createdAt?.toISOString?.() || String(row.createdAt),
+    updatedAt: row.updatedAt?.toISOString?.() || String(row.updatedAt),
+    executionDeadlineAt: row.executionDeadlineAt?.toISOString?.() || (row.executionDeadlineAt ? String(row.executionDeadlineAt) : null),
+    completedAt: row.completedAt?.toISOString?.() || (row.completedAt ? String(row.completedAt) : null),
+  }));
+}
+
+/**
+ * Conditionally updates the current stage of an active generation task.
+ */
+export async function updateGenerationTaskStage(
+  taskId: string,
+  stage: 'queued' | 'prompting_ai' | 'validating_schema' | 'persisting'
+): Promise<boolean> {
+  if (activeTestMockStore?.updateGenerationTaskStage) {
+    return activeTestMockStore.updateGenerationTaskStage(taskId, stage);
+  }
+
+  await ensureGenerationTasksTable();
+
+  const res = await query(
+    `UPDATE generation_tasks
+     SET current_stage = $1, updated_at = NOW()
+     WHERE id = $2 AND status = 'processing';`,
+    [stage, taskId]
+  );
+
+  return (res.rowCount ?? 0) > 0;
+}
+
+/**
+ * Conditionally completes a generation task.
+ * Atomic guard: ONLY transitions to 'completed' if the task is STILL in 'processing' status.
+ * If the user cancelled the task while provider was executing, this returns false and drops persistence.
+ */
+export async function completeGenerationTask(
+  taskId: string,
+  resultData: any,
+  persistedEntityId?: string | null
+): Promise<boolean> {
+  if (activeTestMockStore?.completeGenerationTask) {
+    return activeTestMockStore.completeGenerationTask(taskId, resultData, persistedEntityId || undefined);
+  }
+
+  await ensureGenerationTasksTable();
+
+  const resultDataJson = typeof resultData === 'string' ? resultData : JSON.stringify(resultData);
+
+  const res = await query(
+    `UPDATE generation_tasks
+     SET status = 'completed',
+         current_stage = 'persisting',
+         result_data_json = $1,
+         persisted_entity_id = $2,
+         completed_at = NOW(),
+         updated_at = NOW()
+     WHERE id = $3 AND status = 'processing';`,
+    [resultDataJson, persistedEntityId || null, taskId]
+  );
+
+  return (res.rowCount ?? 0) > 0;
+}
+
+/**
+ * Conditionally marks an active task as failed with sanitized error details.
+ */
+export async function failGenerationTask(
+  taskId: string,
+  error: {
+    message: string;
+    category?: string;
+    isRetryable?: boolean;
+  }
+): Promise<boolean> {
+  if (activeTestMockStore?.failGenerationTask) {
+    return activeTestMockStore.failGenerationTask(taskId, error);
+  }
+
+  await ensureGenerationTasksTable();
+
+  const res = await query(
+    `UPDATE generation_tasks
+     SET status = 'failed',
+         error_message = $1,
+         error_category = $2,
+         is_retryable = $3,
+         completed_at = NOW(),
+         updated_at = NOW()
+     WHERE id = $4 AND status IN ('queued', 'processing');`,
+    [
+      error.message,
+      error.category || 'unknown',
+      error.isRetryable !== false,
+      taskId,
+    ]
+  );
+
+  return (res.rowCount ?? 0) > 0;
+}
+
+/**
+ * Cancels an active generation task on behalf of the owning user.
+ */
+export async function cancelGenerationTask(userId: string, taskId: string): Promise<boolean> {
+  if (activeTestMockStore?.cancelGenerationTask) {
+    return activeTestMockStore.cancelGenerationTask(userId, taskId);
+  }
+
+  await ensureGenerationTasksTable();
+
+  const res = await query(
+    `UPDATE generation_tasks
+     SET status = 'cancelled',
+         completed_at = NOW(),
+         updated_at = NOW()
+     WHERE id = $1 AND user_id = $2 AND status IN ('queued', 'processing');`,
+    [taskId, userId]
+  );
+
+  return (res.rowCount ?? 0) > 0;
+}
+
+/**
+ * Housekeeping sweeper: marks all tasks that have exceeded their deadline plus a safety buffer as failed.
+ * Condition strictly requires execution_deadline_at < NOW() - buffer.
+ * A task within its legitimate execution window CANNOT be prematurely failed by cleanup.
+ */
+export async function cleanupStaleGenerationTasks(graceBufferSeconds: number = 5): Promise<number> {
+  if (activeTestMockStore?.cleanupStaleGenerationTasks) {
+    return activeTestMockStore.cleanupStaleGenerationTasks(graceBufferSeconds);
+  }
+
+  await ensureGenerationTasksTable();
+
+  const res = await query(
+    `UPDATE generation_tasks
+     SET status = 'failed',
+         error_message = 'The task exceeded its execution window and timed out.',
+         error_category = 'timeout',
+         is_retryable = true,
+         completed_at = NOW(),
+         updated_at = NOW()
+     WHERE status IN ('queued', 'processing')
+       AND execution_deadline_at IS NOT NULL
+       AND execution_deadline_at < (NOW() - ($1 || ' seconds')::INTERVAL);`,
+    [String(graceBufferSeconds)]
+  );
+
+  return res.rowCount ?? 0;
+}
+
+
+

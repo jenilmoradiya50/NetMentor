@@ -1,93 +1,373 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LoginPage } from './components/auth/LoginPage';
 import { DatabaseStatusBadge } from './components/common/DatabaseStatusBadge';
 import { FlashcardsHub } from './components/flashcards/FlashcardsHub';
+import { GenerateStandaloneFlashcardModal } from './components/flashcards/GenerateStandaloneFlashcardModal';
 import { PacketTracerLabsView } from './components/labs/PacketTracerLabsView';
-import { authApi } from './lib/api';
-import type { LearningPath } from './types';
+import { CurriculumHub } from './components/curriculum/CurriculumHub';
+import { PersonalLibraryHub } from './components/library/PersonalLibraryHub';
+import { GenerateLessonModal } from './components/library/GenerateLessonModal';
+import { GeneratedLessonReader } from './components/library/GeneratedLessonReader';
+import { Sheet } from './components/ui/Sheet';
+import { Button } from './components/ui/Button';
+import { Badge } from './components/ui/Badge';
+import { CURRICULUM_PATHS } from './data/curriculum/curriculum-data';
 import {
-  BookOpen,
   ShieldCheck,
-  Cpu,
   Terminal,
   Compass,
-  CheckCircle2,
   LogOut,
-  Loader2,
   Clock,
-  RefreshCw,
   Sparkles,
   Layers,
   Network,
+  Loader2,
+  ArrowLeft,
+  Bot,
+  BookOpen,
+  FileQuestion,
 } from 'lucide-react';
+import { AiTutorProvider, useAiTutor } from './context/AiTutorContext';
+import { AiTutorDrawer } from './components/curriculum/AiTutorDrawer';
+import {
+  generatedLessonsApi,
+  type GeneratedLessonDetail,
+  type GeneratedLessonContent,
+  type GradedQuizAttemptResponse,
+} from './lib/api';
+import { GenerationManagerProvider, useGenerationManager } from './context/GenerationManagerContext';
+import { FloatingGenerationWidget } from './components/common/FloatingGenerationWidget';
+import { QuizzesHub } from './components/quizzes/QuizzesHub';
+import { GenerateQuizModal } from './components/quizzes/GenerateQuizModal';
+import { QuizPlayerView } from './components/quizzes/QuizPlayerView';
+import { QuizResultsView } from './components/quizzes/QuizResultsView';
 
-const SYNTHETIC_PATHS: LearningPath[] = [
-  {
-    id: 'demo-fund',
-    slug: 'network-fundamentals',
-    title: 'Network Fundamentals (Demo)',
-    description: 'OSI & TCP/IP models, IPv4/IPv6 addressing, subnetting, and switching fundamentals.',
-    targetCert: 'Fundamentals',
-    orderIndex: 1,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 'demo-ccna',
-    slug: 'ccna-200-301',
-    title: 'CCNA: Routing, Switching & Security (Demo)',
-    description: 'VLANs, Trunking, STP, EtherChannel, OSPFv2, NAT, ACLs, and wireless LAN architecture.',
-    targetCert: 'CCNA',
-    orderIndex: 2,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 'demo-encor',
-    slug: 'ccnp-encor',
-    title: 'CCNP: Enterprise Core & Architecture (Demo)',
-    description: 'BGP path vector routing, SD-WAN overlay fabrics, QoS, and Python network automation.',
-    targetCert: 'CCNP Enterprise',
-    orderIndex: 3,
-    createdAt: new Date().toISOString(),
-  },
-];
+type TabId = 'curriculum' | 'flashcards' | 'quizzes' | 'labs' | 'library';
 
 function Dashboard() {
   const { logout, isDemoMode, exitDemoMode, user, sessionExpiresAt } = useAuth();
-  const [mainTab, setMainTab] = useState<'flashcards' | 'curriculum' | 'labs'>('flashcards');
-  const [paths, setPaths] = useState<LearningPath[]>([]);
-  const [selectedPath, setSelectedPath] = useState<string>('');
-  const [loadingPaths, setLoadingPaths] = useState<boolean>(true);
-  const [fetchError, setFetchError] = useState<string | null>(null);
+  const {
+    isOpen: isAiTutorOpen,
+    mode: aiTutorMode,
+    lessonContext,
+    activeSectionId,
+    activeExerciseId,
+    openTutor,
+    closeTutor,
+  } = useAiTutor();
+  const [mainTab, setMainTab] = useState<TabId>(() => {
+    if (typeof window !== 'undefined') {
+      const t = new URLSearchParams(window.location.search).get('tab');
+      if (t === 'flashcards' || t === 'quizzes' || t === 'labs' || t === 'curriculum' || t === 'library') return t;
+    }
+    return 'flashcards';
+  });
+  const [activeLessonId, setActiveLessonId] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      return new URLSearchParams(window.location.search).get('lesson');
+    }
+    return null;
+  });
+  const [selectedGeneratedLessonId, setSelectedGeneratedLessonId] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      return new URLSearchParams(window.location.search).get('genLesson');
+    }
+    return null;
+  });
+  const [studyingDeckId, setStudyingDeckId] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      return new URLSearchParams(window.location.search).get('deckId');
+    }
+    return null;
+  });
+  const [activeQuizId, setActiveQuizId] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      return new URLSearchParams(window.location.search).get('quizId');
+    }
+    return null;
+  });
+  const [activeAttemptId, setActiveAttemptId] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      return new URLSearchParams(window.location.search).get('attemptId');
+    }
+    return null;
+  });
+  const [activeAttemptData, setActiveAttemptData] = useState<GradedQuizAttemptResponse | null>(null);
+  const [selectedGeneratedLesson, setSelectedGeneratedLesson] = useState<GeneratedLessonDetail | null>(null);
+  const [isLoadingGenLesson, setIsLoadingGenLesson] = useState(false);
 
-  const loadProtectedData = async () => {
-    setLoadingPaths(true);
-    setFetchError(null);
+  // Lesson Generator Modal state
+  const [isCreateLessonModalOpen, setIsCreateLessonModalOpen] = useState(false);
+  const [createLessonParams, setCreateLessonParams] = useState<{
+    initialTopic?: string;
+    context?: string;
+    conversationId?: string;
+  }>({});
 
-    if (isDemoMode) {
-      setPaths(SYNTHETIC_PATHS);
-      if (!selectedPath) {
-        setSelectedPath(SYNTHETIC_PATHS[0].id);
+  // Quiz Generator Modal state
+  const [isQuizModalOpen, setIsQuizModalOpen] = useState(false);
+  const [quizModalParams, setQuizModalParams] = useState<{
+    initialTopic?: string;
+    lessonId?: string;
+    lessonTitle?: string;
+  }>({});
+
+  // Standalone Flashcard Generator Modal state
+  const [isStandaloneFlashcardModalOpen, setIsStandaloneFlashcardModalOpen] = useState(false);
+  const [standaloneFlashcardInitialTopic, setStandaloneFlashcardInitialTopic] = useState('');
+
+  // Background Task Result Preview hydration state
+  const { registerResultViewer } = useGenerationManager();
+  const [lessonDraftToPreview, setLessonDraftToPreview] = useState<GeneratedLessonContent | null>(null);
+  const [flashcardDraftToPreview, setFlashcardDraftToPreview] = useState<any | null>(null);
+
+  // Register callback so clicking "Open Result" in the persistent floating widget routes properly
+  useEffect(() => {
+    return registerResultViewer(({ task }) => {
+      if (task.taskType === 'quiz') {
+        const quizId = task.persistedEntityId || task.resultData?.quizId;
+        if (quizId) {
+          handleStartQuiz(quizId);
+        } else {
+          handleTabChange('quizzes');
+        }
+      } else if (task.taskType === 'lesson') {
+        if (task.resultData?.lesson) {
+          setLessonDraftToPreview(task.resultData.lesson);
+          setCreateLessonParams({
+            initialTopic: task.resultData.lesson.topic || task.resultData.lesson.lessonTitle,
+          });
+          setIsCreateLessonModalOpen(true);
+        } else {
+          handleTabChange('library');
+        }
+      } else if (task.taskType === 'flashcards') {
+        if (task.resultData?.deck) {
+          setFlashcardDraftToPreview(task.resultData.deck);
+          setStandaloneFlashcardInitialTopic(task.resultData.deck.title || task.topic || '');
+          setIsStandaloneFlashcardModalOpen(true);
+        } else {
+          handleTabChange('flashcards');
+        }
       }
-      setLoadingPaths(false);
+    });
+  }, [registerResultViewer]);
+
+  const [isMobileAccountOpen, setIsMobileAccountOpen] = useState(false);
+
+  // Synchronize browser history and hardware back buttons
+  useEffect(() => {
+    const handlePopState = () => {
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search);
+        const tab = params.get('tab');
+        if (tab === 'flashcards' || tab === 'quizzes' || tab === 'labs' || tab === 'curriculum' || tab === 'library') {
+          setMainTab(tab as TabId);
+        }
+        const lesson = params.get('lesson');
+        setActiveLessonId(lesson);
+        const genLesson = params.get('genLesson');
+        setSelectedGeneratedLessonId(genLesson);
+        const deck = params.get('deckId');
+        setStudyingDeckId(deck);
+        const qId = params.get('quizId');
+        setActiveQuizId(qId);
+        const aId = params.get('attemptId');
+        setActiveAttemptId(aId);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  // Fetch full details when selectedGeneratedLessonId changes
+  useEffect(() => {
+    if (!selectedGeneratedLessonId) {
+      setSelectedGeneratedLesson(null);
       return;
     }
+    let cancelled = false;
+    setIsLoadingGenLesson(true);
+    generatedLessonsApi
+      .getLesson(selectedGeneratedLessonId)
+      .then((res) => {
+        if (!cancelled && res.data?.success && res.data.lesson) {
+          setSelectedGeneratedLesson(res.data.lesson);
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to load generated lesson:', err);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingGenLesson(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedGeneratedLessonId]);
 
-    const res = await authApi.getPaths();
-    if (res.data?.paths) {
-      setPaths(res.data.paths);
-      if (res.data.paths.length > 0 && !selectedPath) {
-        setSelectedPath(res.data.paths[0].id);
-      }
-    } else {
-      setFetchError(res.message || 'Failed to fetch protected curriculum tracks');
+  const handleOpenGeneratedLesson = (id: string) => {
+    setSelectedGeneratedLessonId(id);
+    setMainTab('library');
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', 'library');
+      url.searchParams.set('genLesson', id);
+      window.history.pushState({ genLesson: id }, '', url.toString());
+      window.scrollTo({ top: 0, behavior: 'instant' });
     }
-    setLoadingPaths(false);
   };
 
-  useEffect(() => {
-    loadProtectedData();
-  }, [isDemoMode]);
+  const handleBackToLibraryHub = () => {
+    setSelectedGeneratedLessonId(null);
+    setSelectedGeneratedLesson(null);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('genLesson');
+      window.history.pushState({}, '', url.toString());
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
+  };
+
+  const handleRenameGeneratedLesson = async (id: string, newTitle: string) => {
+    await generatedLessonsApi.renameLesson(id, newTitle);
+    if (selectedGeneratedLesson && selectedGeneratedLesson.id === id) {
+      setSelectedGeneratedLesson({
+        ...selectedGeneratedLesson,
+        title: newTitle,
+      });
+    }
+  };
+
+  const handleDeleteGeneratedLesson = async (id: string) => {
+    await generatedLessonsApi.deleteLesson(id);
+    handleBackToLibraryHub();
+  };
+
+  const handleSelectLesson = (lessonId: string) => {
+    setActiveLessonId(lessonId);
+    setMainTab('curriculum');
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', 'curriculum');
+      url.searchParams.set('lesson', lessonId);
+      window.history.pushState({ lessonId }, '', url.toString());
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
+  };
+
+  const handleBackToCurriculum = () => {
+    setActiveLessonId(null);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('lesson');
+      window.history.pushState({}, '', url.toString());
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
+  };
+
+  const handleTabChange = (newTab: TabId) => {
+    setMainTab(newTab);
+    setActiveLessonId(null);
+    setSelectedGeneratedLessonId(null);
+    setSelectedGeneratedLesson(null);
+    setStudyingDeckId(null);
+    setActiveQuizId(null);
+    setActiveAttemptId(null);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', newTab);
+      url.searchParams.delete('lesson');
+      url.searchParams.delete('genLesson');
+      url.searchParams.delete('deckId');
+      url.searchParams.delete('quizId');
+      url.searchParams.delete('attemptId');
+      window.history.pushState({}, '', url.toString());
+    }
+  };
+
+  const handleStartQuiz = (quizId: string) => {
+    setActiveQuizId(quizId);
+    setActiveAttemptId(null);
+    setActiveAttemptData(null);
+    setMainTab('quizzes');
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', 'quizzes');
+      url.searchParams.set('quizId', quizId);
+      url.searchParams.delete('attemptId');
+      window.history.pushState({ quizId }, '', url.toString());
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
+  };
+
+  const handleViewQuizResults = (attemptId: string, preloadedAttempt?: GradedQuizAttemptResponse) => {
+    setActiveAttemptId(attemptId);
+    setActiveAttemptData(preloadedAttempt || null);
+    setActiveQuizId(null);
+    setMainTab('quizzes');
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', 'quizzes');
+      url.searchParams.set('attemptId', attemptId);
+      url.searchParams.delete('quizId');
+      window.history.pushState({ attemptId }, '', url.toString());
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
+  };
+
+  const handleExitQuiz = () => {
+    setActiveQuizId(null);
+    setActiveAttemptId(null);
+    setActiveAttemptData(null);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('quizId');
+      url.searchParams.delete('attemptId');
+      window.history.pushState({}, '', url.toString());
+    }
+  };
+
+  const handleStudyDeck = (deckId: string) => {
+    setStudyingDeckId(deckId);
+    setMainTab('flashcards');
+    setSelectedGeneratedLessonId(null);
+    setSelectedGeneratedLesson(null);
+    setActiveQuizId(null);
+    setActiveAttemptId(null);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', 'flashcards');
+      url.searchParams.set('deckId', deckId);
+      url.searchParams.delete('genLesson');
+      url.searchParams.delete('lesson');
+      url.searchParams.delete('quizId');
+      url.searchParams.delete('attemptId');
+      window.history.pushState({ deckId }, '', url.toString());
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
+  };
+
+  const activeLessonData = useMemo(() => {
+    if (!activeLessonId) return null;
+    for (const p of CURRICULUM_PATHS) {
+      for (const t of p.topics) {
+        const found = t.lessons.find((l) => l.id === activeLessonId);
+        if (found) {
+          return { lesson: found, pathTitle: p.title, topicTitle: t.title };
+        }
+      }
+    }
+    return null;
+  }, [activeLessonId]);
+
+  const isInsideLesson =
+    (mainTab === 'curriculum' && !!activeLessonData) ||
+    (mainTab === 'library' && !!selectedGeneratedLessonId) ||
+    (mainTab === 'flashcards' && !!studyingDeckId) ||
+    (mainTab === 'quizzes' && (!!activeQuizId || !!activeAttemptId));
 
   const formatExpiresAt = (expSeconds: number | null) => {
     if (!expSeconds) return 'Active';
@@ -100,312 +380,490 @@ function Dashboard() {
     });
   };
 
+  const navOptions = [
+    {
+      id: 'curriculum' as TabId,
+      label: 'Curriculum',
+      icon: <Compass className="w-4 h-4" />,
+      badge: 'Core',
+    },
+    {
+      id: 'flashcards' as TabId,
+      label: 'Flashcards',
+      icon: <Layers className="w-4 h-4" />,
+      badge: 'CCNA',
+    },
+    {
+      id: 'quizzes' as TabId,
+      label: 'Quizzes',
+      icon: <FileQuestion className="w-4 h-4" />,
+      badge: 'AI',
+    },
+    {
+      id: 'labs' as TabId,
+      label: 'Labs',
+      icon: <Network className="w-4 h-4" />,
+      badge: '48 .pkt',
+    },
+    {
+      id: 'library' as TabId,
+      label: 'Personal Library',
+      icon: <BookOpen className="w-4 h-4" />,
+      badge: 'AI',
+    },
+  ];
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+    <div className="min-h-screen bg-canvas text-slate-100 flex flex-col font-sans selection:bg-accent/30 selection:text-white">
       {/* Demo Mode Alert Banner */}
       {isDemoMode && (
-        <div className="bg-amber-950/90 border-b border-amber-800/80 px-4 py-2 text-center text-xs text-amber-200 flex flex-wrap items-center justify-center gap-2 shadow-inner">
+        <aside
+          aria-label="Demo mode warning"
+          className="bg-amber-950/80 border-b border-amber-800/60 px-4 py-2 text-center text-xs text-amber-200 flex flex-wrap items-center justify-center gap-2 backdrop-blur-md"
+        >
           <Sparkles className="w-4 h-4 text-amber-400 flex-shrink-0 animate-pulse" />
           <span>
-            <strong>DEMO MODE ACTIVE:</strong> Exploring synthetic curriculum data for UI evaluation. Real database authentication is bypassed. Administrative controls are disabled.
+            <strong>DEMO MODE ACTIVE:</strong> Exploring synthetic curriculum data. Real database authentication is bypassed.
           </span>
           <button
             onClick={exitDemoMode}
-            className="ml-2 px-2.5 py-0.5 rounded-md bg-amber-900 hover:bg-amber-800 text-amber-100 border border-amber-700 text-[11px] font-semibold transition-colors shadow-sm"
+            className="ml-2 px-2.5 py-0.5 rounded-full bg-amber-900/80 hover:bg-amber-800 text-amber-100 border border-amber-700/80 text-[11px] font-medium press-scale"
           >
-            Exit Demo Mode
+            Exit Demo
           </button>
-        </div>
+        </aside>
       )}
 
-      {/* Top Header */}
-      <header className="border-b border-slate-800 bg-slate-900/70 backdrop-blur sticky top-0 z-20 safe-top">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-lg bg-brand-600 flex items-center justify-center font-bold text-white shadow-lg shadow-brand-500/20">
-              <Terminal className="w-5 h-5" />
-            </div>
-            <div>
-              <h1 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
-                NetMentor
-                {isDemoMode ? (
-                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800/80">
-                    Demo Mode (Synthetic Data)
+      {/* Floating Glass Navigation Header */}
+      <header className="glass-nav sticky top-0 z-30 safe-top">
+        <div className="max-w-6xl mx-auto px-4 py-2.5 flex items-center justify-between gap-3">
+          {/* Brand Identity / Sticky Lesson Back Navigation */}
+          {isInsideLesson && activeLessonData ? (
+            <div className="flex items-center gap-2 min-w-0 flex-1 sm:flex-initial">
+              <button
+                type="button"
+                onClick={handleBackToCurriculum}
+                className="flex items-center gap-2 text-slate-200 hover:text-white transition-colors press-scale py-1 -ml-1 pl-1 pr-2.5 rounded-xl hover:bg-white/[0.06] min-h-[44px] group"
+                aria-label="Back to Curriculum"
+              >
+                <div className="w-8 h-8 rounded-xl bg-surface-elevated border border-slate-700/60 flex items-center justify-center text-accent group-hover:text-white group-hover:border-accent/50 transition-colors shadow-sm flex-shrink-0">
+                  <ArrowLeft className="w-4 h-4" />
+                </div>
+                <div className="flex flex-col text-left min-w-0">
+                  <span className="text-[10px] text-slate-400 font-medium uppercase tracking-wider leading-none">
+                    Curriculum
                   </span>
-                ) : (
-                  <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-brand-950 text-brand-300 border border-brand-800/60">
-                    Protected Session
+                  <span className="text-xs sm:text-sm font-bold text-white truncate max-w-[85px] xs:max-w-[150px] sm:max-w-[280px]">
+                    {activeLessonData.lesson.title}
                   </span>
-                )}
-              </h1>
-              <p className="text-xs text-slate-400 hidden sm:block">
-                AI-Powered Networking Mastery & Interview Preparation
-              </p>
+                </div>
+              </button>
             </div>
-          </div>
-
-          {/* Database status, Session info & Logout */}
-          <div className="flex items-center gap-2 sm:gap-3">
-            <div className="hidden sm:block">
-              <DatabaseStatusBadge showLatency={true} />
-            </div>
-
-            {isDemoMode ? (
-              <div className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md bg-amber-950/60 text-amber-300 border border-amber-800/50">
-                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                <span className="font-medium">Demo Mode</span>
+          ) : (
+            <div className="flex items-center gap-3">
+              <div className="h-9 w-9 rounded-xl bg-brand-600 flex items-center justify-center font-bold text-white shadow-md shadow-brand-500/25 border border-brand-400/30">
+                <Terminal className="w-5 h-5" />
               </div>
-            ) : (
-              <div className="hidden md:flex items-center gap-2 text-xs px-2.5 py-1 rounded-md bg-emerald-950/60 text-emerald-400 border border-emerald-800/40">
-                <ShieldCheck className="w-3.5 h-3.5" />
-                <span>User: <strong className="font-semibold text-slate-100">{user || 'jenilmoradiya50'}</strong></span>
-                {sessionExpiresAt && (
-                  <span className="text-slate-400 border-l border-emerald-800/60 pl-2 flex items-center gap-1">
-                    <Clock className="w-3 h-3" />
-                    Exp: {formatExpiresAt(sessionExpiresAt)}
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-base sm:text-lg font-bold tracking-tight text-white heading-title">
+                    NetMentor
                   </span>
-                )}
+                  {isDemoMode ? (
+                    <Badge variant="amber" size="sm" className="hidden xs:inline-flex">
+                      Demo Mode
+                    </Badge>
+                  ) : (
+                    <Badge variant="blue" size="sm" className="hidden xs:inline-flex">
+                      Protected
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-400 hidden sm:block">
+                  Interactive Networking Engineering & CCNA / CCNP Mastery
+                </p>
               </div>
-            )}
+            </div>
+          )}
 
+          {/* Desktop Right Controls (AI Tutor, Database status, Session info & Logout) */}
+          <div className="hidden md:flex items-center gap-2.5">
             <button
+              type="button"
+              onClick={() => openTutor()}
+              className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl bg-surface-elevated/70 hover:bg-surface-elevated text-slate-200 hover:text-white border border-slate-700/60 hover:border-accent/40 shadow-inner-light transition-all press-scale min-h-[36px]"
+              aria-label="Open NetMentor AI Tutor"
+            >
+              <Bot className="w-3.5 h-3.5 text-accent" />
+              <span className="font-medium">Ask AI Tutor</span>
+              <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-accent/20 text-accent border border-accent/30">
+                AI Assistant
+              </span>
+            </button>
+
+            <DatabaseStatusBadge showLatency={true} />
+
+            <div className="flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-xl bg-surface-elevated/70 text-emerald-400 border border-slate-700/60 shadow-inner-light">
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span className="text-slate-300 font-medium">
+                {user || 'jenilmoradiya50'}
+              </span>
+              {sessionExpiresAt && (
+                <span className="text-slate-500 border-l border-slate-700/60 pl-2 flex items-center gap-1 font-mono text-[10px]">
+                  <Clock className="w-3 h-3" />
+                  {formatExpiresAt(sessionExpiresAt)}
+                </span>
+              )}
+            </div>
+
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => (isDemoMode ? exitDemoMode() : logout())}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-rose-950/80 hover:text-rose-300 hover:border-rose-800/50 border border-slate-700 text-slate-200 transition-all shadow-sm"
+              icon={<LogOut className="w-3.5 h-3.5" />}
               title={isDemoMode ? 'Exit Demo Mode' : 'Sign Out of NetMentor'}
             >
-              <LogOut className="w-3.5 h-3.5" />
-              <span>{isDemoMode ? 'Exit Demo' : 'Sign Out'}</span>
+              <span>{isDemoMode ? 'Exit' : 'Sign Out'}</span>
+            </Button>
+          </div>
+
+          {/* Mobile Right Controls: AI Tutor & Compact Account Button */}
+          <div className="flex items-center gap-1.5 md:hidden flex-shrink-0">
+            <button
+              type="button"
+              onClick={() => openTutor()}
+              className="p-2 rounded-xl bg-surface-elevated text-accent border border-slate-700/60 press-scale min-h-[44px] min-w-[44px] flex items-center justify-center relative"
+              aria-label="Open NetMentor AI Tutor"
+              title="Ask AI Tutor"
+            >
+              <Bot className="w-4 h-4 text-accent" />
+              <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-accent animate-pulse" />
+            </button>
+            <DatabaseStatusBadge showLatency={false} />
+            <button
+              type="button"
+              onClick={() => setIsMobileAccountOpen(true)}
+              className="p-2 rounded-xl bg-surface-elevated text-slate-300 border border-slate-700/60 press-scale min-h-[44px] min-w-[44px] flex items-center justify-center"
+              aria-label="Account details"
+            >
+              <ShieldCheck className="w-4 h-4 text-emerald-400" />
             </button>
           </div>
         </div>
       </header>
 
-      {/* Platform Navigation */}
-      <nav className="border-b border-slate-800 bg-slate-900/40 sticky top-[57px] z-10 backdrop-blur">
-        <div className="max-w-6xl mx-auto px-4 flex items-center gap-1 sm:gap-2 overflow-x-auto">
-          <button
-            type="button"
-            onClick={() => setMainTab('flashcards')}
-            className={`py-3 px-3 sm:px-4 text-xs font-semibold border-b-2 flex items-center gap-2 transition-all whitespace-nowrap ${
-              mainTab === 'flashcards'
-                ? 'border-brand-500 text-brand-300'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Layers className="w-4 h-4" />
-            <span>CCNA Flashcards</span>
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-brand-950 text-brand-300 border border-brand-800/60 hidden sm:inline-block">
-              Jeremy's IT Lab
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setMainTab('labs')}
-            className={`py-3 px-3 sm:px-4 text-xs font-semibold border-b-2 flex items-center gap-2 transition-all whitespace-nowrap ${
-              mainTab === 'labs'
-                ? 'border-brand-500 text-brand-300'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Network className="w-4 h-4" />
-            <span>Packet Tracer Labs</span>
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-800 text-slate-300">
-              48 Labs
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setMainTab('curriculum')}
-            className={`py-3 px-3 sm:px-4 text-xs font-semibold border-b-2 flex items-center gap-2 transition-all whitespace-nowrap ${
-              mainTab === 'curriculum'
-                ? 'border-brand-500 text-brand-300'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Compass className="w-4 h-4" />
-            <span>Guarded Curriculum</span>
-          </button>
+      {/* Desktop Platform Navigation Bar with Bold Blue Active Indicator */}
+      <nav aria-label="Desktop Platform Navigation" className="glass-subnav sticky top-[53px] z-20 hidden md:block">
+        <div className="max-w-6xl mx-auto px-4 flex items-center gap-1">
+          {navOptions.map((opt) => {
+            const isSelected = opt.id === mainTab;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => handleTabChange(opt.id)}
+                className={`py-3 px-4 text-xs font-semibold flex items-center gap-2 border-b-2 transition-all select-none press-scale-subtle ${
+                  isSelected
+                    ? 'border-brand-500 text-brand-300 bg-brand-500/10'
+                    : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-white/[0.03]'
+                }`}
+              >
+                {opt.icon}
+                <span>{opt.label}</span>
+                {opt.badge && (
+                  <span
+                    className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full border transition-colors ${
+                      isSelected
+                        ? 'bg-brand-950 text-brand-300 border-brand-800/60 font-semibold'
+                        : 'bg-surface-elevated text-slate-400 border-slate-700/60'
+                    }`}
+                  >
+                    {opt.badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
       </nav>
 
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-6xl w-full mx-auto px-4 py-8">
+      {/* Main Content Area (extra bottom padding only on screens with floating dock) */}
+      <main
+        className={`flex-1 max-w-6xl w-full mx-auto px-4 py-6 sm:py-8 ${
+          isInsideLesson ? 'pb-8 md:pb-12' : 'pb-32 md:pb-12'
+        }`}
+      >
         {mainTab === 'flashcards' ? (
-          <FlashcardsHub />
+          <FlashcardsHub
+            initialStudyingDeckId={studyingDeckId}
+            onClearStudyingDeck={() => setStudyingDeckId(null)}
+          />
+        ) : mainTab === 'quizzes' ? (
+          activeAttemptId ? (
+            <QuizResultsView
+              attemptId={activeAttemptId}
+              initialAttempt={activeAttemptData}
+              onRetake={(quizId) => handleStartQuiz(quizId)}
+              onBackToHub={handleExitQuiz}
+              onViewLesson={handleOpenGeneratedLesson}
+            />
+          ) : activeQuizId ? (
+            <QuizPlayerView
+              quizId={activeQuizId}
+              onComplete={(attemptId, attempt) => handleViewQuizResults(attemptId, attempt)}
+              onExit={handleExitQuiz}
+            />
+          ) : (
+            <QuizzesHub
+              onStartQuiz={handleStartQuiz}
+              onViewResults={handleViewQuizResults}
+              onOpenGenerator={() => {
+                setQuizModalParams({});
+                setIsQuizModalOpen(true);
+              }}
+              onViewLesson={handleOpenGeneratedLesson}
+            />
+          )
         ) : mainTab === 'labs' ? (
           <PacketTracerLabsView />
+        ) : mainTab === 'library' ? (
+          selectedGeneratedLesson ? (
+            <GeneratedLessonReader
+              lesson={selectedGeneratedLesson}
+              onBack={handleBackToLibraryHub}
+              onRename={handleRenameGeneratedLesson}
+              onDelete={handleDeleteGeneratedLesson}
+              onStudyDeck={handleStudyDeck}
+              onTakeQuiz={handleStartQuiz}
+              onGenerateQuiz={(lessonId, lessonTitle, lessonTopic) => {
+                setQuizModalParams({
+                  lessonId,
+                  lessonTitle,
+                  initialTopic: lessonTopic,
+                });
+                setIsQuizModalOpen(true);
+              }}
+              onAskAi={(topic) => {
+                openTutor({
+                  mode: 'general_qa',
+                  lessonTitle: topic,
+                });
+              }}
+            />
+          ) : isLoadingGenLesson ? (
+            <div className="py-24 text-center space-y-3">
+              <div className="w-8 h-8 rounded-full border-2 border-accent border-t-transparent animate-spin mx-auto" />
+              <p className="text-xs text-white/50">Loading custom lesson...</p>
+            </div>
+          ) : (
+            <PersonalLibraryHub
+              onOpenLesson={handleOpenGeneratedLesson}
+              onCreateNewLesson={() => {
+                setCreateLessonParams({});
+                setIsCreateLessonModalOpen(true);
+              }}
+            />
+          )
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {/* Left Column: Learning Paths from Server */}
-            <section className="lg:col-span-1 space-y-6">
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-                    <Compass className="w-4 h-4 text-brand-400" />
-                    Guarded Curriculum
-                  </h2>
-                  <button
-                    onClick={loadProtectedData}
-                    disabled={loadingPaths}
-                    className="text-slate-400 hover:text-slate-200 p-1"
-                    title="Refresh curriculum from server"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${loadingPaths ? 'animate-spin' : ''}`} />
-                  </button>
-                </div>
-
-                {loadingPaths ? (
-                  <div className="p-8 text-center bg-slate-900/40 border border-slate-800 rounded-xl">
-                    <Loader2 className="w-5 h-5 text-brand-400 animate-spin mx-auto mb-2" />
-                    <p className="text-xs text-slate-400">Loading protected paths...</p>
-                  </div>
-                ) : fetchError ? (
-                  <div className="p-4 rounded-xl bg-rose-950/40 border border-rose-800/40 text-xs text-rose-300">
-                    {fetchError}
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {paths.map((path) => (
-                      <button
-                        key={path.id}
-                        onClick={() => setSelectedPath(path.id)}
-                        className={`w-full text-left p-3.5 rounded-xl border transition-all ${
-                          selectedPath === path.id
-                            ? 'bg-slate-800/90 border-brand-500/60 shadow-md shadow-brand-500/5 ring-1 ring-brand-500/30'
-                            : 'bg-slate-900/50 border-slate-800 hover:border-slate-700 hover:bg-slate-900'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-xs font-semibold text-brand-300 uppercase tracking-wider">
-                            {path.targetCert}
-                          </span>
-                          {selectedPath === path.id && (
-                            <CheckCircle2 className="w-4 h-4 text-brand-400" />
-                          )}
-                        </div>
-                        <h3 className="font-semibold text-slate-100 text-sm">{path.title}</h3>
-                        <p className="text-xs text-slate-400 mt-1 line-clamp-2">{path.description}</p>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Security Status Box */}
-              <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/40">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2.5 flex items-center gap-2">
-                  <Cpu className="w-4 h-4 text-brand-400" />
-                  Runtime Security Status
-                </h3>
-                <ul className="text-xs space-y-2 text-slate-300">
-                  {isDemoMode ? (
-                    <>
-                      <li className="flex items-center gap-2 text-amber-400">
-                        <Sparkles className="w-3.5 h-3.5 flex-shrink-0" />
-                        Demo Mode Active (Synthetic Curriculum)
-                      </li>
-                      <li className="flex items-center gap-2 text-slate-400">
-                        <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0 text-slate-500" />
-                        No real database queries performed
-                      </li>
-                      <li className="flex items-center gap-2 text-slate-400">
-                        <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0 text-slate-500" />
-                        Administrative APIs restricted
-                      </li>
-                    </>
-                  ) : (
-                    <>
-                      <li className="flex items-center gap-2 text-emerald-400">
-                        <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
-                        HttpOnly signed session cookie
-                      </li>
-                      <li className="flex items-center gap-2 text-emerald-400">
-                        <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
-                        Server-side API route guard active
-                      </li>
-                      <li className="flex items-center gap-2 text-emerald-400">
-                        <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
-                        Argon2id live database auth
-                      </li>
-                      <li className="flex items-center gap-2 text-emerald-400">
-                        <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
-                        Anti-CSRF custom header validation
-                      </li>
-                    </>
-                  )}
-                </ul>
-              </div>
-            </section>
-
-            {/* Right Column: Active Track Outline */}
-            <section className="lg:col-span-2 space-y-6">
-              <div className="p-6 rounded-2xl border border-slate-800 bg-slate-900/60">
-                {paths.filter((p) => p.id === selectedPath).length > 0 ? (
-                  paths
-                    .filter((p) => p.id === selectedPath)
-                    .map((path) => (
-                      <div key={path.id} className="space-y-4">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-semibold px-2.5 py-1 rounded-md bg-brand-950 text-brand-300 border border-brand-800/50">
-                            Track: {path.targetCert}
-                          </span>
-                          <span className="text-xs text-emerald-400 flex items-center gap-1">
-                            <ShieldCheck className="w-3.5 h-3.5" />
-                            Guarded Server Response
-                          </span>
-                        </div>
-                        <h2 className="text-xl font-bold text-white">{path.title}</h2>
-                        <p className="text-sm text-slate-300 leading-relaxed">{path.description}</p>
-
-                        <div className="pt-4 border-t border-slate-800/80">
-                          <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-2">
-                            <BookOpen className="w-4 h-4 text-brand-400" />
-                            Target Modules for Seed Curriculum
-                          </h4>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                            <div className="p-3 rounded-lg bg-slate-950/70 border border-slate-800">
-                              <p className="font-semibold text-slate-200">1. Packet Walkthrough & ARP</p>
-                              <p className="text-slate-400 mt-1">
-                                Host-to-host delivery, frame rewriting, default gateways.
-                              </p>
-                            </div>
-                            <div className="p-3 rounded-lg bg-slate-950/70 border border-slate-800">
-                              <p className="font-semibold text-slate-200">2. OSPF Neighbor States</p>
-                              <p className="text-slate-400 mt-1">
-                                Down, Init, 2-Way, ExStart, Exchange, Loading, Full.
-                              </p>
-                            </div>
-                            <div className="p-3 rounded-lg bg-slate-950/70 border border-slate-800">
-                              <p className="font-semibold text-slate-200">3. Troubleshooting Scenarios</p>
-                              <p className="text-slate-400 mt-1">
-                                MTU mismatch, subnet mask errors, passive interface bugs.
-                              </p>
-                            </div>
-                            <div className="p-3 rounded-lg bg-slate-950/70 border border-slate-800">
-                              <p className="font-semibold text-slate-200">4. Interview Concept Drills</p>
-                              <p className="text-slate-400 mt-1">
-                                TCP 3-way handshake teardown, BGP loop prevention.
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ))
-                ) : (
-                  <div className="py-12 text-center text-slate-400 text-sm">
-                    Select a learning path to inspect its modules.
-                  </div>
-                )}
-              </div>
-            </section>
-          </div>
+          <CurriculumHub
+            activeLessonId={activeLessonId}
+            onSelectLesson={handleSelectLesson}
+            onBackToCurriculum={handleBackToCurriculum}
+            onNavigateToFlashcards={() => handleTabChange('flashcards')}
+            onNavigateToLabs={() => handleTabChange('labs')}
+          />
+        )}
+        {/* Mobile bottom clearance spacer ensuring content never sits behind the floating dock */}
+        {!isInsideLesson && (
+          <div className="h-20 md:hidden pointer-events-none" aria-hidden="true" />
         )}
       </main>
 
+      {/* Mobile Floating iOS-style Navigation Dock (Hidden inside individual lesson) */}
+      {!isInsideLesson && (
+        <nav
+          aria-label="Mobile Navigation"
+          className="md:hidden fixed bottom-3 left-4 right-4 z-40 glass-dock rounded-2xl p-1.5 flex items-center justify-around shadow-2xl safe-bottom"
+        >
+          {navOptions.map((opt) => {
+            const isActive = mainTab === opt.id;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => handleTabChange(opt.id)}
+                className={`flex-1 flex flex-col items-center justify-center py-1.5 px-2 rounded-xl text-xs font-medium transition-all duration-150 min-h-[44px] press-scale select-none ${
+                  isActive
+                    ? 'bg-brand-600 text-white font-semibold shadow-md shadow-brand-500/25'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <span className="mb-0.5">{opt.icon}</span>
+                <span className="text-[11px] tracking-tight">{opt.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      )}
+
+      {/* Mobile Account Details Bottom Sheet */}
+      <Sheet
+        isOpen={isMobileAccountOpen}
+        onClose={() => setIsMobileAccountOpen(false)}
+        title="Session & Security"
+        subtitle="Active user credentials and database connection"
+        maxWidth="sm"
+      >
+        <div className="space-y-4">
+          <div className="p-4 rounded-xl bg-surface-subtle/80 border border-white/[0.08] space-y-2">
+            <span className="text-[10px] uppercase font-semibold text-slate-400 block tracking-wider">
+              Signed in User
+            </span>
+            <div className="flex items-center gap-2 text-white font-medium">
+              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+              <span>{user || 'jenilmoradiya50'}</span>
+            </div>
+            {sessionExpiresAt && (
+              <p className="text-xs text-slate-400 flex items-center gap-1 font-mono pt-1">
+                <Clock className="w-3.5 h-3.5 text-slate-500" />
+                Session Expiry: {formatExpiresAt(sessionExpiresAt)}
+              </p>
+            )}
+          </div>
+
+          <div className="p-4 rounded-xl bg-surface-subtle/80 border border-white/[0.08] space-y-2">
+            <span className="text-[10px] uppercase font-semibold text-slate-400 block tracking-wider">
+              Neon PostgreSQL Target
+            </span>
+            <DatabaseStatusBadge showLatency={true} />
+          </div>
+
+          <div className="pt-2">
+            <Button
+              variant="danger"
+              size="lg"
+              className="w-full"
+              onClick={() => {
+                setIsMobileAccountOpen(false);
+                if (isDemoMode) {
+                  exitDemoMode();
+                } else {
+                  logout();
+                }
+              }}
+              icon={<LogOut className="w-4 h-4" />}
+            >
+              {isDemoMode ? 'Exit Demo Mode' : 'Sign Out of NetMentor'}
+            </Button>
+          </div>
+        </div>
+      </Sheet>
+
+      {/* Floating Ask AI Tutor Entry Button (Single persistent global entry point) */}
+      <button
+        type="button"
+        onClick={() => openTutor()}
+        className={`fixed z-40 flex items-center gap-2.5 px-3.5 sm:px-4 py-2.5 rounded-full bg-surface-elevated/95 border border-accent/40 text-white shadow-xl shadow-black/50 hover:border-accent hover:bg-surface-elevated hover:shadow-accent/20 focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none transition-all press-scale backdrop-blur-md min-h-[44px] ${
+          isInsideLesson
+            ? 'bottom-[max(1.25rem,env(safe-area-inset-bottom,1.25rem))] right-4 sm:bottom-6 sm:right-6'
+            : 'bottom-20 right-4 md:bottom-6 md:right-6'
+        }`}
+        aria-label="Open NetMentor AI Tutor"
+      >
+        <div className="w-2 h-2 rounded-full bg-accent animate-pulse" />
+        <Bot className="w-4 h-4 text-accent" />
+        <span className="text-xs font-bold tracking-tight">Ask AI Tutor</span>
+        <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-accent/20 text-accent border border-accent/30">
+          AI Assistant
+        </span>
+      </button>
+
+      {/* Global AI Tutor Slide-Over Drawer */}
+      <AiTutorDrawer
+        isOpen={isAiTutorOpen}
+        onClose={closeTutor}
+        lessonId={lessonContext?.lessonId}
+        lessonTitle={lessonContext?.lessonTitle}
+        sections={lessonContext?.sections}
+        activeSectionId={activeSectionId}
+        activeExerciseId={activeExerciseId}
+        initialMode={aiTutorMode}
+        onCreateLesson={(topic, context, convId) => {
+          setCreateLessonParams({
+            initialTopic: topic,
+            context,
+            conversationId: convId,
+          });
+          setIsCreateLessonModalOpen(true);
+        }}
+        onGenerateStandaloneFlashcards={(topic) => {
+          setStandaloneFlashcardInitialTopic(topic);
+          setIsStandaloneFlashcardModalOpen(true);
+        }}
+      />
+
+      {/* Persistent Background AI Generation Widget (Milestone 3) */}
+      <FloatingGenerationWidget />
+
+      {/* AI Lesson Generator Modal */}
+      <GenerateLessonModal
+        isOpen={isCreateLessonModalOpen}
+        onClose={() => {
+          setIsCreateLessonModalOpen(false);
+          setLessonDraftToPreview(null);
+        }}
+        onLessonSaved={(lessonId) => {
+          setIsCreateLessonModalOpen(false);
+          setLessonDraftToPreview(null);
+          setMainTab('library');
+          handleOpenGeneratedLesson(lessonId);
+        }}
+        initialTopic={createLessonParams.initialTopic}
+        conversationContext={createLessonParams.context}
+        conversationId={createLessonParams.conversationId}
+        initialDraftLesson={lessonDraftToPreview}
+      />
+
+      {/* AI Quiz Generator Modal */}
+      <GenerateQuizModal
+        isOpen={isQuizModalOpen}
+        onClose={() => setIsQuizModalOpen(false)}
+        initialTopic={quizModalParams.initialTopic}
+        lessonId={quizModalParams.lessonId}
+        lessonTitle={quizModalParams.lessonTitle}
+        onQuizReady={(quizId, autoStart) => {
+          setIsQuizModalOpen(false);
+          if (autoStart) {
+            handleStartQuiz(quizId);
+          } else {
+            handleTabChange('quizzes');
+          }
+        }}
+      />
+
+      {/* Standalone AI Flashcard Generator Modal */}
+      <GenerateStandaloneFlashcardModal
+        isOpen={isStandaloneFlashcardModalOpen}
+        onClose={() => {
+          setIsStandaloneFlashcardModalOpen(false);
+          setFlashcardDraftToPreview(null);
+        }}
+        initialTopic={standaloneFlashcardInitialTopic}
+        initialDraftDeck={flashcardDraftToPreview}
+        onSaved={() => {
+          setIsStandaloneFlashcardModalOpen(false);
+          setFlashcardDraftToPreview(null);
+          handleTabChange('flashcards');
+        }}
+        onStudyNow={(deckId) => {
+          setIsStandaloneFlashcardModalOpen(false);
+          setFlashcardDraftToPreview(null);
+          handleStudyDeck(deckId);
+        }}
+      />
+
       {/* Footer */}
-      <footer className="border-t border-slate-800 py-4 px-4 text-center text-xs text-slate-500 safe-bottom">
+      <footer className="border-t border-white/[0.06] py-5 px-4 text-center text-xs text-slate-500 safe-bottom">
         NetMentor &bull; Personal AI Networking Tutor &bull; Protected Session
       </footer>
     </div>
@@ -418,12 +876,12 @@ function AppContent() {
   // Full-screen loading screen while checking existing HttpOnly session
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-4">
-        <div className="h-12 w-12 rounded-2xl bg-brand-600/20 border border-brand-500/40 flex items-center justify-center text-brand-400 mb-4 animate-pulse">
-          <Terminal className="w-6 h-6" />
+      <div className="min-h-screen bg-canvas text-slate-100 flex flex-col items-center justify-center p-4">
+        <div className="h-14 w-14 rounded-2xl bg-accent/15 border border-accent/30 flex items-center justify-center text-accent mb-4 shadow-xl shadow-accent/10 animate-pulse">
+          <Terminal className="w-7 h-7" />
         </div>
         <p className="text-sm font-medium text-slate-300 flex items-center gap-2">
-          <Loader2 className="w-4 h-4 animate-spin text-brand-400" />
+          <Loader2 className="w-4 h-4 animate-spin text-accent" />
           Verifying security session...
         </p>
       </div>
@@ -442,7 +900,11 @@ function AppContent() {
 export function App() {
   return (
     <AuthProvider>
-      <AppContent />
+      <GenerationManagerProvider>
+        <AiTutorProvider>
+          <AppContent />
+        </AiTutorProvider>
+      </GenerationManagerProvider>
     </AuthProvider>
   );
 }

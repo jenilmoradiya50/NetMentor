@@ -124,7 +124,7 @@ export function DatabaseStatusBadge({ className = '', showLatency = true }: Data
       case 'connected':
         return (
           <div
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-950/80 text-emerald-400 border border-emerald-800/70 shadow-sm"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-success/15 text-emerald-300 border border-success/30 shadow-sm"
             title={`Connected to Cloud PostgreSQL${latency ? ` (Latency: ${latency}ms)` : ''}`}
           >
             <span className="relative flex h-2 w-2">
@@ -132,9 +132,11 @@ export function DatabaseStatusBadge({ className = '', showLatency = true }: Data
               <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
             </span>
             <Database className="w-3.5 h-3.5 flex-shrink-0" />
-            <span>PostgreSQL Cloud DB Active</span>
+            <span className="hidden xs:inline">
+              <span className="hidden sm:inline">PostgreSQL </span>Active
+            </span>
             {showLatency && latency !== null && (
-              <span className="text-[10px] text-emerald-500 font-mono ml-0.5 opacity-80">
+              <span className="text-[10px] text-emerald-400 font-mono ml-0.5 opacity-90 hidden xs:inline">
                 {latency}ms
               </span>
             )}
@@ -144,22 +146,24 @@ export function DatabaseStatusBadge({ className = '', showLatency = true }: Data
       case 'database_unavailable':
         return (
           <div
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-950/80 text-rose-400 border border-rose-800/70 shadow-sm"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-danger/15 text-rose-300 border border-danger/30 shadow-sm"
             title="Database service is offline or unconfigured"
           >
-            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 text-rose-400" />
-            <span>PostgreSQL Cloud DB Offline</span>
+            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 text-danger" />
+            <span className="hidden xs:inline">
+              <span className="hidden sm:inline">DB </span>Offline
+            </span>
           </div>
         );
 
       case 'initial':
         return (
           <div
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-950/80 text-amber-300 border border-amber-800/70 shadow-sm"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-warning/15 text-amber-300 border border-warning/30 shadow-sm"
             title="Checking PostgreSQL database connection..."
           >
-            <RefreshCw className="w-3.5 h-3.5 flex-shrink-0 animate-spin text-amber-400" />
-            <span>Checking Database...</span>
+            <RefreshCw className="w-3.5 h-3.5 flex-shrink-0 animate-spin text-warning" />
+            <span className="hidden xs:inline">Checking...</span>
           </div>
         );
 
@@ -167,11 +171,13 @@ export function DatabaseStatusBadge({ className = '', showLatency = true }: Data
       default:
         return (
           <div
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-950/80 text-rose-400 border border-rose-800/70 shadow-sm"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-danger/15 text-rose-300 border border-danger/30 shadow-sm"
             title="Health endpoint unreachable or network failed"
           >
-            <WifiOff className="w-3.5 h-3.5 flex-shrink-0 text-rose-400" />
-            <span>Database Status Unknown / Unreachable</span>
+            <WifiOff className="w-3.5 h-3.5 flex-shrink-0 text-danger" />
+            <span className="hidden xs:inline">
+              <span className="hidden sm:inline">DB </span>Unreachable
+            </span>
           </div>
         );
     }
@@ -184,10 +190,11 @@ export function DatabaseStatusBadge({ className = '', showLatency = true }: Data
         type="button"
         onClick={() => checkHealth(true)}
         disabled={isRefreshing}
-        className="p-1 rounded-full text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 transition-colors disabled:opacity-40"
+        className="p-1.5 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-xl text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors disabled:opacity-40 press-scale"
         title="Refresh database connection status"
+        aria-label="Refresh database status"
       >
-        <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin text-brand-400' : ''}`} />
+        <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin text-accent' : ''}`} />
       </button>
     </div>
   );

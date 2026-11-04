@@ -56,12 +56,70 @@ function vercelApiDevPlugin(): Plugin {
           return;
         }
 
-        let targetFile = path.resolve(__dirname, 'api', ...segments) + '.ts';
-        if (!fs.existsSync(targetFile)) {
-          targetFile = path.resolve(__dirname, 'api', ...segments, 'index.ts');
+        const dynamicParams: Record<string, string> = {};
+        let targetFile: string | null = null;
+
+        // Try direct file or index.ts first
+        const directFile = path.resolve(__dirname, 'api', ...segments) + '.ts';
+        const directIndex = path.resolve(__dirname, 'api', ...segments, 'index.ts');
+        if (fs.existsSync(directFile)) {
+          targetFile = directFile;
+        } else if (fs.existsSync(directIndex)) {
+          targetFile = directIndex;
+        } else {
+          // Dynamic route matching for [param] folders or files
+          let currentDir = path.resolve(__dirname, 'api');
+          for (let i = 0; i < segments.length; i++) {
+            const seg = segments[i];
+            const isLast = i === segments.length - 1;
+
+            if (isLast) {
+              const f = path.resolve(currentDir, seg + '.ts');
+              const idx = path.resolve(currentDir, seg, 'index.ts');
+              if (fs.existsSync(f)) {
+                targetFile = f;
+                break;
+              }
+              if (fs.existsSync(idx)) {
+                targetFile = idx;
+                break;
+              }
+              if (fs.existsSync(currentDir)) {
+                const entries = fs.readdirSync(currentDir);
+                const dynamicEntry = entries.find((e) => e.startsWith('[') && e.endsWith('].ts'));
+                if (dynamicEntry) {
+                  const match = dynamicEntry.match(/^\[([^\]]+)\]\.ts$/);
+                  const paramName = match ? match[1] : dynamicEntry.slice(1, -4);
+                  dynamicParams[paramName] = seg;
+                  targetFile = path.resolve(currentDir, dynamicEntry);
+                  break;
+                }
+              }
+            } else {
+              const directDir = path.resolve(currentDir, seg);
+              if (fs.existsSync(directDir) && fs.statSync(directDir).isDirectory()) {
+                currentDir = directDir;
+              } else if (fs.existsSync(currentDir)) {
+                const entries = fs.readdirSync(currentDir);
+                const dynamicDir = entries.find(
+                  (e) => e.startsWith('[') && e.endsWith(']') && fs.statSync(path.resolve(currentDir, e)).isDirectory()
+                );
+                if (dynamicDir) {
+                  const match = dynamicDir.match(/^\[([^\]]+)\]$/);
+                  const paramName = match ? match[1] : dynamicDir.slice(1, -1);
+                  dynamicParams[paramName] = seg;
+                  currentDir = path.resolve(currentDir, dynamicDir);
+                } else {
+                  break;
+                }
+              } else {
+                break;
+              }
+            }
+          }
         }
 
-        if (!fs.existsSync(targetFile)) {
+        if (!targetFile || !fs.existsSync(targetFile)) {
           res.statusCode = 404;
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ error: 'Not Found', message: `API route ${url} not found` }));
@@ -85,8 +143,20 @@ function vercelApiDevPlugin(): Plugin {
           }
         }
 
+        // Parse query params
+        const searchStr = (req.url || '').split('?')[1];
+        const query: Record<string, string> = {};
+        if (searchStr) {
+          const params = new URLSearchParams(searchStr);
+          params.forEach((v, k) => {
+            query[k] = v;
+          });
+        }
+
         // Augment req object
+        Object.assign(query, dynamicParams);
         (req as any).body = body;
+        (req as any).query = query;
 
         // Augment res object with Express/Vercel-like helpers
         if (!(res as any).status) {
@@ -132,6 +202,7 @@ export default defineConfig({
     },
   },
   server: {
+    host: '0.0.0.0',
     port: 3000,
     open: false,
   },

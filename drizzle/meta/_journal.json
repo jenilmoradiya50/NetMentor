@@ -15,6 +15,34 @@
       "when": 1793439022931,
       "tag": "0001_acoustic_captain_cross",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793540000000,
+      "tag": "0002_persistent_ai_conversations",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793550000000,
+      "tag": "0003_user_generated_lessons",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793640000000,
+      "tag": "0004_user_quizzes",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793685347204,
+      "tag": "0005_generation_tasks",
+      "breakpoints": true
     }
   ]
 }

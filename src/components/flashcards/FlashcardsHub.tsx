@@ -1,8 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import type { FlashcardDeck, CatalogDeck, DeckImportPreview } from '../../types/flashcards';
 import { flashcardsApi } from '../../lib/api';
+import { useAuth } from '../../context/AuthContext';
 import { ImportPreviewModal } from './ImportPreviewModal';
 import { StudyDeckView } from './StudyDeckView';
+import { Card } from '../ui/Card';
+import { Button } from '../ui/Button';
+import { Badge } from '../ui/Badge';
+import { SegmentedControl } from '../ui/SegmentedControl';
 import {
   Layers,
   Upload,
@@ -18,17 +23,44 @@ import {
   Loader2,
   Plus,
   FolderOpen,
+  Edit3,
 } from 'lucide-react';
 
-export const FlashcardsHub: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'my-decks' | 'catalog' | 'upload'>('my-decks');
+import { JEREMY_CCNA_DECKS } from '../../data/catalog';
+import { GenerateStandaloneFlashcardModal } from './GenerateStandaloneFlashcardModal';
+
+interface FlashcardsHubProps {
+  initialStudyingDeckId?: string | null;
+  onClearStudyingDeck?: () => void;
+}
+
+export const FlashcardsHub: React.FC<FlashcardsHubProps> = ({
+  initialStudyingDeckId,
+  onClearStudyingDeck,
+}) => {
+  const { isDemoMode } = useAuth();
+  const [activeTab, setActiveTab] = useState<'my-decks' | 'catalog' | 'upload'>('catalog');
   const [myDecks, setMyDecks] = useState<FlashcardDeck[]>([]);
-  const [catalogDecks, setCatalogDecks] = useState<CatalogDeck[]>([]);
+  const [myDecksFilter, setMyDecksFilter] = useState<'all' | 'standalone' | 'lesson' | 'anki'>('all');
+  const [catalogDecks, setCatalogDecks] = useState<CatalogDeck[]>(JEREMY_CCNA_DECKS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Standalone AI Flashcard Generator Modal state
+  const [generateModalOpen, setGenerateModalOpen] = useState(false);
+  const [editingDeck, setEditingDeck] = useState<FlashcardDeck | null>(null);
+  const [editingCards, setEditingCards] = useState<any[]>([]);
+  const [loadingEditDeckId, setLoadingEditDeckId] = useState<string | null>(null);
+
   // Active study deck
-  const [studyingDeckId, setStudyingDeckId] = useState<string | null>(null);
+  const [studyingDeckId, setStudyingDeckId] = useState<string | null>(initialStudyingDeckId || null);
+
+  useEffect(() => {
+    if (initialStudyingDeckId) {
+      setStudyingDeckId(initialStudyingDeckId);
+      setActiveTab('my-decks');
+    }
+  }, [initialStudyingDeckId]);
 
   // Preview Modal state
   const [previewData, setPreviewData] = useState<DeckImportPreview | null>(null);
@@ -48,6 +80,11 @@ export const FlashcardsHub: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     setError(null);
+    if (isDemoMode) {
+      setCatalogDecks(JEREMY_CCNA_DECKS);
+      setLoading(false);
+      return;
+    }
     try {
       const [decksRes, catalogRes] = await Promise.all([
         flashcardsApi.getDecks(),
@@ -59,8 +96,11 @@ export const FlashcardsHub: React.FC = () => {
       }
       if (catalogRes.data?.decks) {
         setCatalogDecks(catalogRes.data.decks);
+      } else {
+        setCatalogDecks(JEREMY_CCNA_DECKS);
       }
-    } catch (err: any) {
+    } catch {
+      setCatalogDecks(JEREMY_CCNA_DECKS);
       setError('Failed to load flashcard decks.');
     }
     setLoading(false);
@@ -70,42 +110,70 @@ export const FlashcardsHub: React.FC = () => {
     loadData();
   }, []);
 
-  // Preview a catalog deck
+  // Delete Deck
+  const handleDeleteDeck = async (deckId: string, deckTitle: string) => {
+    if (!window.confirm(`Are you sure you want to delete "${deckTitle}"? All review history will be deleted.`)) {
+      return;
+    }
+    try {
+      const res = await flashcardsApi.deleteDeck(deckId);
+      if (res.data?.success) {
+        setMyDecks((prev) => prev.filter((d) => d.id !== deckId));
+      } else {
+        setError(res.message || 'Failed to delete deck.');
+      }
+    } catch {
+      setError('Error communicating with server while deleting deck.');
+    }
+  };
+
+  // Open Edit Modal for Standalone Deck
+  const handleOpenEditDeck = async (deck: FlashcardDeck) => {
+    setLoadingEditDeckId(deck.id);
+    setError(null);
+    try {
+      const res = await flashcardsApi.getCards(deck.id);
+      if (res.data?.cards) {
+        setEditingDeck(deck);
+        setEditingCards(res.data.cards);
+        setGenerateModalOpen(true);
+      } else {
+        setError(res.message || 'Failed to load flashcards for editing.');
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Error communicating with server to load cards.');
+    } finally {
+      setLoadingEditDeckId(null);
+    }
+  };
+
+  // Preview Catalog Deck
   const handlePreviewCatalogDeck = async (deck: CatalogDeck) => {
     setPreviewLoadingId(deck.id);
-    setError(null);
     try {
       const res = await flashcardsApi.preview({ catalogId: deck.id });
       if (res.data?.preview) {
         setPreviewData(res.data.preview);
         setPreviewOpen(true);
       } else {
-        setError(res.message || 'Failed to preview deck.');
+        setError(res.message || 'Could not parse catalog deck.');
       }
-    } catch (err: any) {
-      setError(err?.message || 'Error downloading deck for preview.');
+    } catch {
+      setError('Failed to load deck preview.');
     }
     setPreviewLoadingId(null);
   };
 
-  // Preview an uploaded custom .apkg file
+  // Upload Custom File Preview
   const handlePreviewCustomFile = async (file: File) => {
-    setUploadError(null);
-    if (!file.name.endsWith('.apkg')) {
-      setUploadError('Invalid format: Only Anki deck (.apkg) files are supported.');
-      return;
-    }
-
-    if (file.size > 50 * 1024 * 1024) {
-      setUploadError('File exceeds maximum upload limit of 50 MB.');
-      return;
-    }
-
     setLoading(true);
+    setUploadError(null);
     const reader = new FileReader();
     reader.onload = async () => {
       try {
-        const base64Data = reader.result as string;
+        const dataUrl = reader.result as string;
+        const base64Data = dataUrl.split(',')[1];
+
         const res = await flashcardsApi.preview({
           base64Data,
           filename: file.name,
@@ -134,7 +202,6 @@ export const FlashcardsHub: React.FC = () => {
     if (!previewData) return;
     setImporting(true);
     try {
-      // If previewData was from a catalog deck
       const matchingCatalog = catalogDecks.find((d) => d.title.includes(previewData.title) || d.filename.includes(previewData.deckName));
 
       const payload = matchingCatalog
@@ -159,7 +226,7 @@ export const FlashcardsHub: React.FC = () => {
         setError(res.message || 'Failed to import deck.');
       }
     } catch (err: any) {
-      setError(err?.message || 'Import failed.');
+      setError(err?.message || 'Failed to import deck.');
     }
     setImporting(false);
   };
@@ -167,145 +234,137 @@ export const FlashcardsHub: React.FC = () => {
   const fileToBase64 = (file: File): Promise<string> =>
     new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
+      reader.onload = () => {
+        const res = reader.result as string;
+        resolve(res.split(',')[1]);
+      };
       reader.onerror = reject;
       reader.readAsDataURL(file);
     });
 
-  // Delete Deck
-  const handleDeleteDeck = async (deckId: string, deckTitle: string) => {
-    if (!window.confirm(`Are you sure you want to remove "${deckTitle}"? Your learning review progress for this deck will be deleted.`)) {
-      return;
-    }
-
-    try {
-      const res = await flashcardsApi.deleteDeck(deckId);
-      if (res.data?.success) {
-        setMyDecks((prev) => prev.filter((d) => d.id !== deckId));
-      } else {
-        alert(res.message || 'Failed to delete deck.');
-      }
-    } catch (err: any) {
-      alert(err?.message || 'Error deleting deck.');
-    }
-  };
+  // Unique categories for filtering
+  const categories = ['all', ...Array.from(new Set(catalogDecks.map((d) => d.category)))];
 
   // Filter catalog decks
-  const categories = ['all', ...Array.from(new Set(catalogDecks.map((d) => d.category)))];
-  const filteredCatalog = catalogDecks.filter((deck) => {
-    const matchesCategory = selectedCategory === 'all' || deck.category === selectedCategory;
+  const filteredCatalog = catalogDecks.filter((d) => {
     const matchesSearch =
-      !searchQuery.trim() ||
-      deck.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      deck.cleanTitle.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      `day ${deck.day}`.includes(searchQuery.toLowerCase());
-    return matchesCategory && matchesSearch;
+      d.cleanTitle.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      d.filename.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      d.day.toString() === searchQuery.trim();
+    const matchesCategory = selectedCategory === 'all' || d.category === selectedCategory;
+    return matchesSearch && matchesCategory;
   });
 
-  // If currently studying a deck
+  // If studying a deck, render study view
   if (studyingDeckId) {
-    return <StudyDeckView deckId={studyingDeckId} onBack={() => setStudyingDeckId(null)} />;
+    return (
+      <StudyDeckView
+        deckId={studyingDeckId}
+        onBack={() => {
+          setStudyingDeckId(null);
+          onClearStudyingDeck?.();
+          loadData();
+        }}
+      />
+    );
   }
+
+  const tabOptions = [
+    {
+      id: 'my-decks' as const,
+      label: 'My Study Decks',
+      icon: <FolderOpen className="w-4 h-4" />,
+      badge: myDecks.length,
+    },
+    {
+      id: 'catalog' as const,
+      label: 'CCNA Catalog',
+      icon: <BookOpen className="w-4 h-4" />,
+      badge: catalogDecks.length,
+    },
+    {
+      id: 'upload' as const,
+      label: 'Upload .apkg',
+      icon: <Upload className="w-4 h-4" />,
+    },
+  ];
 
   return (
     <div className="space-y-6">
-      {/* Top Banner */}
-      <div className="p-6 rounded-2xl bg-gradient-to-r from-slate-900 via-brand-950/30 to-slate-900 border border-slate-800 shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="h-12 w-12 rounded-xl bg-brand-600/20 text-brand-400 border border-brand-500/30 flex items-center justify-center shadow-inner">
+      {/* Top Banner Header */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-white/[0.08] pb-5">
+        <div className="flex items-center gap-3.5">
+          <div className="h-12 w-12 rounded-2xl bg-accent/15 text-accent border border-accent/30 flex items-center justify-center flex-shrink-0 shadow-lg shadow-accent/10">
             <Layers className="w-6 h-6" />
           </div>
           <div>
-            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+            <h2 className="text-xl sm:text-2xl font-bold text-white flex flex-wrap items-center gap-2.5 heading-title">
               Jeremy's IT Lab CCNA Flashcards
-              <span className="text-xs px-2.5 py-0.5 rounded-full bg-brand-950 text-brand-300 border border-brand-800/60 font-semibold">
+              <Badge variant="blue" size="sm">
                 61 Modules
-              </span>
+              </Badge>
             </h2>
-            <p className="text-xs text-slate-400">
+            <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
               Interactive flashcard study system with fill-in-the-blank brackets, cloze deletions, and persistent progress.
             </p>
           </div>
         </div>
 
-        {/* Global Stats or Action */}
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setActiveTab('catalog')}
-            className="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold shadow-md shadow-brand-600/20 transition-all flex items-center gap-1.5"
+        <div className="flex flex-wrap items-center gap-2 self-stretch sm:self-auto">
+          <Button
+            variant="primary"
+            size="md"
+            onClick={() => {
+              setEditingDeck(null);
+              setEditingCards([]);
+              setGenerateModalOpen(true);
+            }}
+            icon={<Sparkles className="w-4 h-4" />}
+            className="w-full sm:w-auto shadow-md shadow-accent/20"
           >
-            <Plus className="w-4 h-4" /> Import from CCNA Catalog
-          </button>
+            Generate AI Flashcards
+          </Button>
+          <Button
+            variant="secondary"
+            size="md"
+            onClick={() => setActiveTab('catalog')}
+            icon={<Plus className="w-4 h-4" />}
+            className="w-full sm:w-auto"
+          >
+            Import CCNA Catalog
+          </Button>
         </div>
       </div>
 
-      {/* Tabs Navigation */}
-      <div className="flex items-center justify-between border-b border-slate-800 pb-px">
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => setActiveTab('my-decks')}
-            className={`px-4 py-2 text-xs font-semibold rounded-t-xl transition-all border-b-2 flex items-center gap-2 ${
-              activeTab === 'my-decks'
-                ? 'border-brand-500 text-brand-300 bg-slate-900/60'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <FolderOpen className="w-4 h-4" />
-            <span>My Study Decks</span>
-            <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-800 text-slate-300">
-              {myDecks.length}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('catalog')}
-            className={`px-4 py-2 text-xs font-semibold rounded-t-xl transition-all border-b-2 flex items-center gap-2 ${
-              activeTab === 'catalog'
-                ? 'border-brand-500 text-brand-300 bg-slate-900/60'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <BookOpen className="w-4 h-4" />
-            <span>CCNA Catalog (Jeremy's IT Lab)</span>
-            <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-800 text-slate-300">
-              {catalogDecks.length}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('upload')}
-            className={`px-4 py-2 text-xs font-semibold rounded-t-xl transition-all border-b-2 flex items-center gap-2 ${
-              activeTab === 'upload'
-                ? 'border-brand-500 text-brand-300 bg-slate-900/60'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Upload className="w-4 h-4" />
-            <span>Upload Custom .apkg</span>
-          </button>
+      {/* Tabs Navigation Control (Horizontally Scrollable without Page Overflow) */}
+      <div className="flex items-center justify-between gap-2 max-w-full">
+        <div className="flex-1 overflow-x-auto no-scrollbar py-0.5">
+          <SegmentedControl
+            options={tabOptions}
+            value={activeTab}
+            onChange={(tab) => setActiveTab(tab)}
+          />
         </div>
 
         <button
           onClick={loadData}
           disabled={loading}
-          className="p-1.5 text-slate-400 hover:text-slate-200"
+          className="p-2.5 rounded-xl border border-slate-800 bg-surface-elevated text-slate-400 hover:text-white press-scale shrink-0 min-h-[42px] min-w-[42px] flex items-center justify-center"
           title="Refresh decks"
+          aria-label="Refresh deck lists"
         >
-          <RotateCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+          <RotateCw className={`w-4 h-4 ${loading ? 'animate-spin text-accent' : ''}`} />
         </button>
       </div>
 
       {/* Global Error Banner */}
       {error && (
-        <div className="p-3.5 rounded-xl bg-rose-950/40 border border-rose-800/40 text-xs text-rose-300 flex items-center justify-between">
+        <div className="p-3.5 rounded-2xl bg-danger/15 border border-danger/30 text-xs text-red-200 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            <AlertCircle className="w-4 h-4 flex-shrink-0 text-danger" />
             <span>{error}</span>
           </div>
-          <button onClick={() => setError(null)} className="text-slate-400 hover:text-slate-200 text-xs">
+          <button onClick={() => setError(null)} className="text-slate-400 hover:text-white text-xs underline">
             Dismiss
           </button>
         </div>
@@ -315,103 +374,206 @@ export const FlashcardsHub: React.FC = () => {
       {activeTab === 'my-decks' && (
         <div>
           {loading ? (
-            <div className="p-16 text-center bg-slate-900/40 border border-slate-800 rounded-2xl flex flex-col items-center justify-center">
-              <Loader2 className="w-8 h-8 text-brand-400 animate-spin mb-3" />
+            <div className="p-16 text-center glass-card rounded-2xl flex flex-col items-center justify-center">
+              <Loader2 className="w-8 h-8 text-accent animate-spin mb-3" />
               <p className="text-xs text-slate-400">Loading your flashcard collection...</p>
             </div>
           ) : myDecks.length === 0 ? (
             /* Empty State */
-            <div className="p-12 text-center bg-slate-900/40 border border-slate-800 rounded-2xl max-w-lg mx-auto space-y-4">
-              <div className="h-14 w-14 rounded-2xl bg-brand-600/10 text-brand-400 border border-brand-500/20 flex items-center justify-center mx-auto shadow-inner">
+            <Card variant="subtle" padding="lg" className="text-center max-w-lg mx-auto space-y-4">
+              <div className="h-14 w-14 rounded-2xl bg-accent/15 text-accent border border-accent/30 flex items-center justify-center mx-auto shadow-inner">
                 <Layers className="w-7 h-7" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-slate-100">No Flashcard Decks Imported Yet</h3>
-                <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+                <h3 className="text-base font-bold text-white heading-title">No Flashcard Decks Imported Yet</h3>
+                <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto leading-relaxed">
                   Import official CCNA modules from Jeremy's IT Lab collection or upload your own custom Anki (.apkg) files to start practicing.
                 </p>
               </div>
-              <div className="flex items-center justify-center gap-3 pt-2">
-                <button
+              <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+                <Button
+                  variant="primary"
+                  size="md"
                   onClick={() => setActiveTab('catalog')}
-                  className="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-xs font-semibold text-white shadow-md shadow-brand-600/20 transition-all flex items-center gap-1.5"
+                  icon={<BookOpen className="w-4 h-4" />}
                 >
-                  <BookOpen className="w-4 h-4" /> Browse 61 CCNA Decks
-                </button>
-                <button
+                  Browse 61 CCNA Decks
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="md"
                   onClick={() => setActiveTab('upload')}
-                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-slate-700 transition-colors flex items-center gap-1.5"
+                  icon={<Upload className="w-4 h-4" />}
                 >
-                  <Upload className="w-4 h-4" /> Upload .apkg
-                </button>
+                  Upload .apkg
+                </Button>
               </div>
-            </div>
+            </Card>
           ) : (
             /* Decks Grid */
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {myDecks.map((deck) => {
-                const studiedCount = deck.studiedCount || 0;
-                const masteredCount = deck.masteredCount || 0;
-                const percent = deck.cardCount > 0 ? Math.round((masteredCount / deck.cardCount) * 100) : 0;
-
-                return (
-                  <div
-                    key={deck.id}
-                    className="p-5 rounded-2xl border border-slate-800 bg-slate-900/60 hover:border-slate-700 transition-all flex flex-col justify-between shadow-sm group"
+            <div className="space-y-4">
+              {/* Category Filter Pills */}
+              <div className="flex items-center gap-2 pb-1 overflow-x-auto no-scrollbar">
+                <button
+                  type="button"
+                  onClick={() => setMyDecksFilter('all')}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold border transition-all ${
+                    myDecksFilter === 'all'
+                      ? 'bg-accent/20 border-accent text-accent'
+                      : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  All Decks ({myDecks.length})
+                </button>
+                {myDecks.some((d) => d.sourceType === 'ai_standalone' || d.sourceName?.startsWith('standalone:')) && (
+                  <button
+                    type="button"
+                    onClick={() => setMyDecksFilter('standalone')}
+                    className={`px-3 py-1 rounded-full text-xs font-semibold border transition-all ${
+                      myDecksFilter === 'standalone'
+                        ? 'bg-accent/20 border-accent text-accent'
+                        : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
+                    }`}
                   >
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-[11px] font-bold text-brand-400 uppercase tracking-wider px-2 py-0.5 rounded bg-brand-950/60 border border-brand-800/40 font-mono">
-                          {deck.deckName}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteDeck(deck.id, deck.title)}
-                          className="p-1 text-slate-500 hover:text-rose-400 opacity-60 group-hover:opacity-100 transition-opacity"
-                          title="Delete Deck"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                    Standalone AI ({myDecks.filter((d) => d.sourceType === 'ai_standalone' || d.sourceName?.startsWith('standalone:')).length})
+                  </button>
+                )}
+                {myDecks.some((d) => d.sourceType === 'ai_generated' || d.sourceName?.startsWith('lesson:')) && (
+                  <button
+                    type="button"
+                    onClick={() => setMyDecksFilter('lesson')}
+                    className={`px-3 py-1 rounded-full text-xs font-semibold border transition-all ${
+                      myDecksFilter === 'lesson'
+                        ? 'bg-purple-500/20 border-purple-500 text-purple-300'
+                        : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    AI Lesson Decks ({myDecks.filter((d) => d.sourceType === 'ai_generated' || d.sourceName?.startsWith('lesson:')).length})
+                  </button>
+                )}
+                {myDecks.some((d) => d.sourceType !== 'ai_standalone' && d.sourceType !== 'ai_generated' && !d.sourceName?.startsWith('lesson:') && !d.sourceName?.startsWith('standalone:')) && (
+                  <button
+                    type="button"
+                    onClick={() => setMyDecksFilter('anki')}
+                    className={`px-3 py-1 rounded-full text-xs font-semibold border transition-all ${
+                      myDecksFilter === 'anki'
+                        ? 'bg-blue-500/20 border-blue-500 text-blue-300'
+                        : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    CCNA Anki ({myDecks.filter((d) => d.sourceType !== 'ai_standalone' && d.sourceType !== 'ai_generated' && !d.sourceName?.startsWith('lesson:') && !d.sourceName?.startsWith('standalone:')).length})
+                  </button>
+                )}
+              </div>
 
-                      <h3 className="text-sm font-semibold text-slate-100 group-hover:text-brand-300 transition-colors line-clamp-2">
-                        {deck.title}
-                      </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {myDecks
+                  .filter((deck) => {
+                    const isStandalone = deck.sourceType === 'ai_standalone' || deck.sourceName?.startsWith('standalone:');
+                    const isLesson = deck.sourceType === 'ai_generated' || deck.sourceName?.startsWith('lesson:');
+                    const isAnki = !isStandalone && !isLesson;
+                    if (myDecksFilter === 'standalone') return isStandalone;
+                    if (myDecksFilter === 'lesson') return isLesson;
+                    if (myDecksFilter === 'anki') return isAnki;
+                    return true;
+                  })
+                  .map((deck) => {
+                    const studiedCount = deck.studiedCount || 0;
+                    const masteredCount = deck.masteredCount || 0;
+                    const percent = deck.cardCount > 0 ? Math.round((masteredCount / deck.cardCount) * 100) : 0;
+                    const isStandalone = deck.sourceType === 'ai_standalone' || deck.sourceName?.startsWith('standalone:');
+                    const isLesson = deck.sourceType === 'ai_generated' || deck.sourceName?.startsWith('lesson:');
 
-                      <div className="mt-3 space-y-1.5">
-                        <div className="flex items-center justify-between text-xs text-slate-400">
-                          <span>Mastery Progress</span>
-                          <span className="font-semibold text-slate-200">{percent}%</span>
-                        </div>
-                        <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                          <div
-                            className="bg-emerald-500 h-full rounded-full transition-all duration-300"
-                            style={{ width: `${percent}%` }}
-                          />
-                        </div>
-                        <div className="flex items-center justify-between text-[11px] text-slate-500 pt-0.5">
-                          <span>{deck.cardCount} cards total</span>
-                          <span>{masteredCount} mastered</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="pt-4 mt-4 border-t border-slate-800/80 flex items-center justify-between">
-                      <span className="text-[11px] text-slate-400">
-                        {studiedCount > 0 ? `${studiedCount} reviewed` : 'Not started'}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setStudyingDeckId(deck.id)}
-                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold shadow-md shadow-brand-600/20 transition-all active:scale-[0.98]"
+                    return (
+                      <Card
+                        key={deck.id}
+                        variant="interactive"
+                        padding="md"
+                        className="flex flex-col justify-between group"
                       >
-                        <Play className="w-3.5 h-3.5 fill-current" />
-                        <span>Study Deck</span>
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+                        <div>
+                          <div className="flex items-center justify-between mb-2.5">
+                            {isStandalone ? (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-accent/20 text-accent border border-accent/30 flex items-center gap-1">
+                                <Sparkles className="w-3 h-3 text-accent" />
+                                AI Standalone
+                              </span>
+                            ) : isLesson ? (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-1">
+                                <Sparkles className="w-3 h-3 text-purple-400" />
+                                AI Lesson
+                              </span>
+                            ) : (
+                              <Badge variant="blue" size="sm">
+                                {deck.deckName || 'CCNA Anki'}
+                              </Badge>
+                            )}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteDeck(deck.id, deck.title);
+                              }}
+                              className="p-1.5 text-slate-500 hover:text-red-400 rounded-lg hover:bg-white/[0.04] transition-colors press-scale"
+                              title="Delete Deck"
+                              aria-label={`Delete ${deck.title}`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+
+                          <h3 className="text-sm font-semibold text-white group-hover:text-sky-300 transition-colors line-clamp-2">
+                            {deck.title}
+                          </h3>
+
+                          <div className="mt-3.5 space-y-1.5">
+                            <div className="flex items-center justify-between text-xs text-slate-400 font-mono">
+                              <span>Mastery Progress</span>
+                              <span className="font-semibold text-white">{percent}%</span>
+                            </div>
+                            <div className="w-full bg-canvas-subtle rounded-full h-1.5 overflow-hidden border border-white/[0.06]">
+                              <div
+                                className="bg-success h-full rounded-full transition-all duration-300"
+                                style={{ width: `${percent}%` }}
+                              />
+                            </div>
+                            <div className="flex items-center justify-between text-[11px] text-slate-500 pt-0.5 font-mono">
+                              <span>{deck.cardCount} cards total</span>
+                              <span>{masteredCount} mastered</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="pt-4 mt-4 border-t border-white/[0.08] flex items-center justify-between">
+                          <span className="text-[11px] text-slate-400">
+                            {studiedCount > 0 ? `${studiedCount} reviewed` : 'Not started'}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            {isStandalone && (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => handleOpenEditDeck(deck)}
+                                disabled={loadingEditDeckId === deck.id}
+                                icon={<Edit3 className="w-3 h-3" />}
+                              >
+                                Edit
+                              </Button>
+                            )}
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              onClick={() => setStudyingDeckId(deck.id)}
+                              icon={<Play className="w-3.5 h-3.5 fill-current" />}
+                            >
+                              Study Deck
+                            </Button>
+                          </div>
+                        </div>
+                      </Card>
+                    );
+                  })}
+              </div>
             </div>
           )}
         </div>
@@ -420,27 +582,27 @@ export const FlashcardsHub: React.FC = () => {
       {/* TAB 2: JEREMY'S IT LAB CCNA CATALOG */}
       {activeTab === 'catalog' && (
         <div className="space-y-5">
-          {/* Search & Domain Filter */}
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-            <div className="relative flex-1 max-w-md">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          {/* Search & Domain Filter (Mobile-First Stacked Layout) */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
+            <div className="relative flex-1 w-full max-w-md">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search CCNA decks (e.g. OSPF, VLAN, Subnetting, ACL, BGP)..."
-                className="w-full pl-9 pr-4 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-brand-500/50"
+                placeholder="Search CCNA decks (OSPF, VLAN, Subnetting)..."
+                className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-surface-subtle border border-slate-700/80 text-base sm:text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/50 focus:border-brand-500 min-h-[44px]"
               />
             </div>
 
-            <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0">
+            <div className="w-full sm:w-auto">
               <select
                 value={selectedCategory}
                 onChange={(e) => setSelectedCategory(e.target.value)}
-                className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-brand-500/50"
+                className="w-full sm:w-auto px-3.5 py-2.5 rounded-xl bg-surface-subtle border border-slate-700/80 text-base sm:text-xs text-white focus:outline-none focus:ring-2 focus:ring-brand-500/50 min-h-[44px]"
               >
                 {categories.map((cat) => (
-                  <option key={cat} value={cat}>
+                  <option key={cat} value={cat} className="bg-canvas text-white">
                     {cat === 'all' ? 'All Exam Domains' : cat}
                   </option>
                 ))}
@@ -449,61 +611,59 @@ export const FlashcardsHub: React.FC = () => {
           </div>
 
           {/* Catalog Decks List */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredCatalog.map((deck) => {
               const alreadyImported = myDecks.some(
-                (d) => d.deckName.toLowerCase() === deck.cleanTitle.toLowerCase().replace(/\s+/g, '') || d.sourceName === deck.filename
+                (d) => d.deckName.toLowerCase() === deck.cleanTitle.toLowerCase().replace(/\s+/g, '') || d.sourceName === deck.filename,
               );
               const isLoading = previewLoadingId === deck.id;
 
               return (
-                <div
+                <Card
                   key={deck.id}
-                  className="p-4 rounded-xl border border-slate-800 bg-slate-900/60 hover:border-slate-700 transition-all flex flex-col justify-between group shadow-sm"
+                  variant="interactive"
+                  padding="md"
+                  className="flex flex-col justify-between group"
                 >
                   <div>
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-[11px] font-bold text-brand-400 uppercase tracking-wider px-2 py-0.5 rounded bg-brand-950/60 border border-brand-800/40 font-mono">
+                      <Badge variant="blue" size="sm">
                         Day {deck.day < 10 ? `0${deck.day}` : deck.day}
-                      </span>
+                      </Badge>
                       <span className="text-[10px] text-slate-400 font-medium">{deck.category}</span>
                     </div>
 
-                    <h3 className="text-sm font-semibold text-slate-100 group-hover:text-brand-300 transition-colors line-clamp-2">
+                    <h3 className="text-sm font-semibold text-white group-hover:text-sky-300 transition-colors line-clamp-2">
                       {deck.cleanTitle}
                     </h3>
 
                     {deck.labs.length > 0 && (
-                      <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400 mt-2">
-                        <CheckCircle2 className="w-3 h-3" /> Includes Packet Tracer Lab
+                      <span className="inline-flex items-center gap-1 text-[11px] text-emerald-300 mt-2">
+                        <CheckCircle2 className="w-3 h-3 text-success" /> Includes Packet Tracer Lab
                       </span>
                     )}
                   </div>
 
-                  <div className="pt-4 mt-3 border-t border-slate-800/80 flex items-center justify-between">
+                  <div className="pt-4 mt-3 border-t border-white/[0.08] flex items-center justify-between gap-2">
                     {alreadyImported ? (
-                      <span className="text-xs text-emerald-400 font-semibold flex items-center gap-1">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> In Library
-                      </span>
+                      <Badge variant="green" size="sm" icon={<CheckCircle2 className="w-3 h-3" />}>
+                        In Library
+                      </Badge>
                     ) : (
-                      <span className="text-xs text-slate-400">Official Jeremy Deck</span>
+                      <span className="text-[11px] text-slate-400">Official Jeremy Deck</span>
                     )}
 
-                    <button
-                      type="button"
+                    <Button
+                      variant={alreadyImported ? 'secondary' : 'primary'}
+                      size="sm"
+                      loading={isLoading}
                       onClick={() => handlePreviewCatalogDeck(deck)}
-                      disabled={isLoading}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-brand-600 text-slate-200 hover:text-white text-xs font-semibold border border-slate-700 hover:border-brand-500 transition-all shadow-sm disabled:opacity-50"
+                      icon={!isLoading ? <Sparkles className="w-3.5 h-3.5" /> : undefined}
                     >
-                      {isLoading ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <Sparkles className="w-3.5 h-3.5" />
-                      )}
                       <span>{alreadyImported ? 'Review / Study' : 'Preview & Import'}</span>
-                    </button>
+                    </Button>
                   </div>
-                </div>
+                </Card>
               );
             })}
           </div>
@@ -513,20 +673,20 @@ export const FlashcardsHub: React.FC = () => {
       {/* TAB 3: CUSTOM .APKG UPLOAD */}
       {activeTab === 'upload' && (
         <div className="max-w-xl mx-auto space-y-6">
-          <div className="p-8 rounded-2xl bg-slate-900/60 border-2 border-dashed border-slate-700 hover:border-brand-500/60 transition-all text-center space-y-4">
-            <div className="h-16 w-16 rounded-2xl bg-brand-600/10 text-brand-400 border border-brand-500/20 flex items-center justify-center mx-auto shadow-inner">
+          <div className="p-8 rounded-2xl bg-surface-subtle/80 border-2 border-dashed border-white/20 hover:border-accent/60 transition-all text-center space-y-4">
+            <div className="h-16 w-16 rounded-2xl bg-accent/15 text-accent border border-accent/30 flex items-center justify-center mx-auto shadow-inner">
               <Upload className="w-8 h-8" />
             </div>
 
             <div>
-              <h3 className="text-base font-bold text-slate-100">Upload Anki Flashcard Package (.apkg)</h3>
-              <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+              <h3 className="text-base font-bold text-white heading-title">Upload Anki Flashcard Package (.apkg)</h3>
+              <p className="text-xs sm:text-sm text-slate-400 mt-1 max-w-sm mx-auto leading-relaxed">
                 Select an Anki collection package exported from your desktop or Jeremy's IT Lab archive. Up to 50 MB supported.
               </p>
             </div>
 
             <label className="inline-block cursor-pointer">
-              <span className="px-5 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-xs font-semibold text-white shadow-md shadow-brand-600/20 transition-all inline-flex items-center gap-2">
+              <span className="px-5 py-2.5 rounded-xl bg-accent hover:bg-accent-hover text-xs font-semibold text-white shadow-md shadow-accent/20 transition-all inline-flex items-center gap-2 press-scale min-h-[44px]">
                 <FileText className="w-4 h-4" /> Browse .apkg File
               </span>
               <input
@@ -544,25 +704,25 @@ export const FlashcardsHub: React.FC = () => {
             </label>
 
             {uploadError && (
-              <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-800/40 text-xs text-rose-300">
+              <div className="p-3.5 rounded-xl bg-danger/15 border border-danger/30 text-xs text-red-200">
                 {uploadError}
               </div>
             )}
           </div>
 
           {/* Guidelines Box */}
-          <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-800 text-xs text-slate-400 space-y-2">
-            <h4 className="font-semibold text-slate-200 flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-brand-400" /> Supported Anki Features:
+          <Card variant="subtle" padding="md" className="space-y-2 text-xs text-slate-400">
+            <h4 className="font-semibold text-white flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-accent" /> Supported Anki Features:
             </h4>
-            <ul className="list-disc list-inside space-y-1 text-slate-400 pl-1">
-              <li>Automatic SQLite <code className="font-mono text-slate-300">collection.anki2</code> schema decompression</li>
-              <li>Fill-in-the-blank <code className="font-mono text-slate-300">[...]</code> brackets with interactive blank reveal</li>
-              <li>Standard Anki cloze syntax <code className="font-mono text-slate-300">&#123;&#123;c1::answer&#125;&#125;</code></li>
+            <ul className="list-disc list-inside space-y-1 text-slate-400 pl-1 leading-relaxed">
+              <li>Automatic SQLite <code className="font-mono text-sky-200">collection.anki2</code> schema decompression</li>
+              <li>Fill-in-the-blank <code className="font-mono text-sky-200">[...]</code> brackets with interactive blank reveal</li>
+              <li>Standard Anki cloze syntax <code className="font-mono text-sky-200">&#123;&#123;c1::answer&#125;&#125;</code></li>
               <li>Embedded images and diagrams with base64 data conversion</li>
               <li>Technical networking CLI syntax highlighting, CIDR notation, and tags</li>
             </ul>
-          </div>
+          </Card>
         </div>
       )}
 
@@ -576,6 +736,26 @@ export const FlashcardsHub: React.FC = () => {
         onOpenDeck={(deckId) => {
           setPreviewOpen(false);
           setStudyingDeckId(deckId);
+        }}
+      />
+
+      {/* Standalone AI Flashcard Generator Modal */}
+      <GenerateStandaloneFlashcardModal
+        isOpen={generateModalOpen}
+        onClose={() => {
+          setGenerateModalOpen(false);
+          setEditingDeck(null);
+          setEditingCards([]);
+        }}
+        existingDeck={editingDeck}
+        existingCards={editingCards}
+        onSaved={async () => {
+          await loadData();
+          setActiveTab('my-decks');
+        }}
+        onStudyNow={(newDeckId) => {
+          setStudyingDeckId(newDeckId);
+          setActiveTab('my-decks');
         }}
       />
     </div>

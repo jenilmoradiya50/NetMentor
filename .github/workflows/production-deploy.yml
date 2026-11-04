@@ -1,0 +1,55 @@
+name: NetMentor CI — Automated Type-Check & Verification
+
+# =============================================================================
+# ARCHITECTURAL NOTICE:
+# Vercel Native Git Integration is the sole deployment authority for NetMentor.
+#
+# IMPORTANT LIMITATION:
+# This workflow runs in GitHub Actions as a continuous integration (CI) check.
+# Because Vercel native Git integration deploys commits via its own webhook
+# independently, a test failure in GitHub Actions will NOT automatically block
+# Vercel deployment unless GitHub Branch Protection with Required Status Checks
+# is explicitly configured on the 'main' branch in GitHub repository settings.
+#
+# This workflow contains ZERO deployment, database migration, or secret-holding
+# jobs to prevent duplicate deployment collisions and race conditions.
+# =============================================================================
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify TypeScript & Automated Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: TypeScript Type-Check
+        run: node node_modules/typescript/bin/tsc --noEmit
+
+      - name: Execute Full Test Suite
+        run: npm test
+        env:
+          AI_PROVIDER: mock
+          NODE_ENV: test
+          SESSION_SECRET: ci-test-session-secret-at-least-32-characters-long

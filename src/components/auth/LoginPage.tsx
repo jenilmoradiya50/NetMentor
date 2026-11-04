@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { DatabaseStatusBadge } from '../common/DatabaseStatusBadge';
-import { Lock, User, KeyRound, Eye, EyeOff, ShieldCheck, AlertCircle, Loader2, Sparkles } from 'lucide-react';
+import { Button } from '../ui/Button';
+import { Lock, User, KeyRound, Eye, EyeOff, AlertCircle, Sparkles } from 'lucide-react';
 
 export function LoginPage() {
   const { login, enterDemoMode, isLoading, error, retryAfter, clearError } = useAuth();
@@ -42,15 +43,15 @@ export function LoginPage() {
   const isLocked = countdown !== null && countdown > 0;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-center items-center px-4 safe-top safe-bottom">
+    <div className="min-h-screen bg-canvas text-slate-100 flex flex-col justify-center items-center px-4 safe-top safe-bottom">
       <div className="w-full max-w-md">
         {/* Brand Header */}
         <div className="text-center mb-6">
-          <div className="inline-flex h-14 w-14 rounded-2xl bg-brand-600/20 border border-brand-500/40 items-center justify-center text-brand-400 mb-4 shadow-xl shadow-brand-500/10">
+          <div className="inline-flex h-14 w-14 rounded-2xl bg-accent/15 border border-accent/30 items-center justify-center text-accent mb-4 shadow-xl shadow-accent/10">
             <Lock className="w-7 h-7" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-white">NetMentor</h1>
-          <p className="text-sm text-slate-400 mt-1">
+          <h1 className="text-2xl font-bold tracking-tight text-white heading-display">NetMentor</h1>
+          <p className="text-xs sm:text-sm text-slate-400 mt-1">
             Personal AI Networking Learning Application
           </p>
           <div className="mt-3 flex justify-center">
@@ -59,21 +60,21 @@ export function LoginPage() {
         </div>
 
         {/* Login Card */}
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 sm:p-8 shadow-2xl backdrop-blur">
-          <div className="flex items-center gap-2 mb-6 pb-4 border-b border-slate-800">
-            <KeyRound className="w-4 h-4 text-brand-400" />
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-300">
+        <div className="glass-card-elevated rounded-2xl p-6 sm:p-8">
+          <div className="flex items-center gap-2 mb-6 pb-4 border-b border-white/[0.08]">
+            <KeyRound className="w-4 h-4 text-accent" />
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-300">
               Sign In
             </h2>
           </div>
 
           {error && (
-            <div className="mb-6 p-3.5 rounded-xl bg-rose-950/60 border border-rose-800/60 flex items-start gap-3 text-rose-300 text-xs animate-shake">
-              <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0 mt-0.5" />
+            <div className="mb-6 p-3.5 rounded-xl bg-danger/15 border border-danger/30 flex items-start gap-3 text-red-200 text-xs">
+              <AlertCircle className="w-4 h-4 text-danger flex-shrink-0 mt-0.5" />
               <div>
                 <p className="font-semibold">{error}</p>
                 {isLocked && (
-                  <p className="mt-1 text-rose-400">
+                  <p className="mt-1 text-red-300">
                     Rate limiting active: Retry available in {countdown}s.
                   </p>
                 )}
@@ -102,7 +103,7 @@ export function LoginPage() {
                   disabled={isLoading || isLocked}
                   placeholder="Username"
                   autoComplete="username"
-                  className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700/80 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/50 focus:border-brand-500 transition-all disabled:opacity-50 pr-10"
+                  className="w-full px-3.5 py-2.5 bg-surface-subtle/80 border border-white/[0.08] rounded-xl text-base sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-all disabled:opacity-50 pr-10"
                 />
                 <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500">
                   <User className="w-4 h-4" />
@@ -130,71 +131,44 @@ export function LoginPage() {
                   disabled={isLoading || isLocked}
                   placeholder="Enter administrator password..."
                   autoComplete="current-password"
-                  autoFocus
-                  className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700/80 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/50 focus:border-brand-500 transition-all disabled:opacity-50 pr-10"
+                  className="w-full px-3.5 py-2.5 bg-surface-subtle/80 border border-white/[0.08] rounded-xl text-base sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-all disabled:opacity-50 pr-10"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   tabIndex={-1}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 transition-colors"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 transition-colors p-1"
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
             </div>
 
-            <button
+            <Button
               type="submit"
-              disabled={isLoading || isLocked || !username.trim() || !passphrase.trim()}
-              className="w-full mt-2 py-2.5 px-4 bg-brand-600 hover:bg-brand-500 active:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium text-sm rounded-xl shadow-lg shadow-brand-600/20 transition-all flex items-center justify-center gap-2"
+              variant="primary"
+              size="lg"
+              loading={isLoading}
+              disabled={isLocked || !username.trim() || !passphrase.trim()}
+              className="w-full mt-2"
             >
-              {isLoading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Verifying Credentials...</span>
-                </>
-              ) : isLocked ? (
-                <span>Rate-Limited ({countdown}s)</span>
-              ) : (
-                <span>Authenticate & Unlock</span>
-              )}
-            </button>
+              Sign In
+            </Button>
           </form>
 
-          {/* Temporary Testing Demo Mode */}
-          <div className="relative my-4">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-slate-800" />
-            </div>
-            <div className="relative flex justify-center text-[10px] uppercase tracking-wider">
-              <span className="bg-slate-900 px-2 text-slate-500">UI Evaluation</span>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={enterDemoMode}
-            className="w-full py-2.5 px-4 bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 hover:border-amber-500/40 text-slate-200 hover:text-amber-300 font-medium text-xs rounded-xl transition-all flex items-center justify-center gap-2 group shadow-sm"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-amber-400 group-hover:rotate-12 transition-transform" />
-            <span>Explore in Demo Mode (Synthetic Data)</span>
-          </button>
-
-          <div className="mt-6 pt-4 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400">
-            <span className="flex items-center gap-1.5 text-emerald-400/90">
-              <ShieldCheck className="w-3.5 h-3.5" />
-              HttpOnly Guard Active
-            </span>
-            <span>Single-User</span>
+          {/* Quick Demo Mode Bypass for Evaluation */}
+          <div className="mt-6 pt-5 border-t border-white/[0.08] text-center">
+            <button
+              type="button"
+              onClick={enterDemoMode}
+              className="inline-flex items-center gap-1.5 text-xs text-amber-400 hover:text-amber-300 font-medium transition-colors press-scale"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Explore Synthetic Demo Mode (Bypasses Auth)</span>
+            </button>
           </div>
         </div>
-
-        <p className="text-center text-xs text-slate-500 mt-6">
-          NetMentor &bull; Protected Personal Study Environment
-        </p>
       </div>
     </div>
   );
 }
-export default LoginPage;
