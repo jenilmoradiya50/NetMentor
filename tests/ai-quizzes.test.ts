@@ -14,12 +14,12 @@
  * 10. Quota Protection: exactly 0 live provider API requests are made.
  */
 
-import generateQuizHandler from '../api/ai/generate-quiz.js';
-import quizzesHandler from '../api/quizzes/index.js';
-import quizByIdHandler from '../api/quizzes/[id].js';
-import quizSubmitHandler from '../api/quizzes/[id]/submit.js';
-import quizAttemptsHandler from '../api/quizzes/[id]/attempts.js';
-import attemptDetailHandler from '../api/quizzes/attempts/[attemptId].js';
+import generateQuizHandler from '../api/_routes/ai/generate-quiz.js';
+import quizzesHandler from '../api/_routes/quizzes/index.js';
+import quizByIdHandler from '../api/_routes/quizzes/[id].js';
+import quizSubmitHandler from '../api/_routes/quizzes/[id]/submit.js';
+import quizAttemptsHandler from '../api/_routes/quizzes/[id]/attempts.js';
+import attemptDetailHandler from '../api/_routes/quizzes/attempts/[attemptId].js';
 import * as client from '../api/_lib/db/client.js';
 import { createSignedSessionToken } from '../api/_lib/crypto.js';
 import {

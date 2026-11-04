@@ -21,10 +21,10 @@
  */
 
 import crypto from 'node:crypto';
-import createTaskHandler, { generateTaskDeterministicIdempotencyKey } from '../api/ai/tasks/create.js';
-import getTaskHandler from '../api/ai/tasks/[id].js';
-import cancelTaskHandler from '../api/ai/tasks/[id]/cancel.js';
-import getActiveTasksHandler from '../api/ai/tasks/active.js';
+import createTaskHandler, { generateTaskDeterministicIdempotencyKey } from '../api/_routes/ai/tasks/create.js';
+import getTaskHandler from '../api/_routes/ai/tasks/[id].js';
+import cancelTaskHandler from '../api/_routes/ai/tasks/[id]/cancel.js';
+import getActiveTasksHandler from '../api/_routes/ai/tasks/active.js';
 import { executeGenerationTask, waitForTaskExecution } from '../api/_lib/ai/task-executor.js';
 import {
   __setTestMockStore,

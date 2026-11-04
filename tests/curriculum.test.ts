@@ -20,7 +20,55 @@ import {
   upsertLessonProgress,
   findUserByUsername,
   query,
+  __setTestMockStore,
 } from '../api/_lib/db/client.ts';
+
+/**
+ * Isolated in-memory SQL jsonb merge simulator matching PostgreSQL 16
+ * jsonb_set and || semantics used in upsertLessonProgress.
+ */
+function simulatePostgresJsonbNotesMerge(
+  storedNotes: string | null | undefined,
+  incomingNotes: string | null | undefined,
+): string | null {
+  const isStoredJson =
+    typeof storedNotes === 'string' && storedNotes.trim().startsWith('{');
+  const isIncomingJson =
+    typeof incomingNotes === 'string' && incomingNotes.trim().startsWith('{');
+
+  if (isStoredJson && isIncomingJson) {
+    let storedObj: Record<string, any> = {};
+    let incomingObj: Record<string, any> = {};
+    try {
+      storedObj = JSON.parse(storedNotes!);
+    } catch {
+      return incomingNotes ?? storedNotes ?? null;
+    }
+    try {
+      incomingObj = JSON.parse(incomingNotes!);
+    } catch {
+      return incomingNotes ?? storedNotes ?? null;
+    }
+
+    const mergedExercises = {
+      ...(storedObj.exercises || {}),
+      ...(incomingObj.exercises || {}),
+    };
+
+    const incomingWithoutExercises = { ...incomingObj };
+    delete incomingWithoutExercises.exercises;
+
+    const merged = {
+      ...storedObj,
+      exercises: mergedExercises,
+      ...incomingWithoutExercises,
+    };
+
+    return JSON.stringify(merged);
+  }
+
+  return incomingNotes ?? storedNotes ?? null;
+}
 
 // Automatically load environment variables if available
 if (typeof process.loadEnvFile === 'function') {
@@ -31,6 +79,102 @@ if (typeof process.loadEnvFile === 'function') {
 async function runCurriculumTests() {
   console.log('=== STARTING NETMENTOR CURRICULUM & LEARNING FOUNDATION TEST SUITE ===\n');
 
+  // Configure isolated in-memory test database store for deterministic offline execution
+  const mockUsers = new Map<string, any>([
+    [
+      'jenilmoradiya50@admin',
+      {
+        id: 'user-admin-1',
+        username: 'jenilmoradiya50@admin',
+        role: 'admin' as const,
+        status: 'active' as const,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ],
+    [
+      'jenilmoradiya50',
+      {
+        id: 'user-student-1',
+        username: 'jenilmoradiya50',
+        role: 'user' as const,
+        status: 'active' as const,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ],
+  ]);
+
+  const mockProgress = new Map<string, any>();
+
+  __setTestMockStore({
+    findUserByUsername: async (username: string) => {
+      return mockUsers.get(username.trim().toLowerCase()) || null;
+    },
+    query: async (text: string, params?: any[]) => {
+      if (typeof text === 'string' && text.includes('DELETE FROM user_progress WHERE lesson_id = $1')) {
+        const lessonId = params?.[0];
+        for (const [key, val] of mockProgress.entries()) {
+          if (val.lessonId === lessonId) {
+            mockProgress.delete(key);
+          }
+        }
+      }
+      return { rows: [], command: 'MOCK', rowCount: 1 } as any;
+    },
+    upsertLessonProgress: async (
+      userId: string,
+      lessonId: string,
+      masteryLevel: string,
+      confidenceScore = 3,
+      notes?: string,
+    ) => {
+      const key = `${userId}:${lessonId}`;
+      const existing = mockProgress.get(key);
+      const mergedNotes = simulatePostgresJsonbNotesMerge(existing?.notes, notes);
+      const record = {
+        id: existing?.id || 'prog-' + Math.random().toString(36).slice(2, 9),
+        userId,
+        lessonId,
+        masteryLevel,
+        confidenceScore,
+        lastReviewedAt: new Date(),
+        notes: mergedNotes,
+      };
+      mockProgress.set(key, record);
+      return {
+        lessonId: record.lessonId,
+        masteryLevel: record.masteryLevel,
+        confidenceScore: record.confidenceScore,
+        lastReviewedAt: record.lastReviewedAt,
+        notes: record.notes,
+      };
+    },
+    getUserLessonProgress: async (userId: string) => {
+      const userRows = Array.from(mockProgress.values()).filter((p) => p.userId === userId);
+      return userRows.map((row) => {
+        let exerciseAttempts: Record<string, any> | undefined = undefined;
+        if (row.notes && typeof row.notes === 'string' && row.notes.startsWith('{')) {
+          try {
+            const parsed = JSON.parse(row.notes);
+            if (parsed && typeof parsed.exercises === 'object') {
+              exerciseAttempts = parsed.exercises;
+            }
+          } catch {}
+        }
+        return {
+          lessonId: row.lessonId,
+          masteryLevel: row.masteryLevel,
+          confidenceScore: row.confidenceScore,
+          lastReviewedAt: row.lastReviewedAt,
+          notes: row.notes,
+          exerciseAttempts,
+        };
+      });
+    },
+  });
+
+  try {
   let passed = 0;
   let failed = 0;
 
@@ -1224,6 +1368,9 @@ async function runCurriculumTests() {
   console.log('\n=============================================================');
   console.log(`✓ ALL CURRICULUM & LEARNING FOUNDATION TESTS PASSED CLEANLY! (${passed} checks, 0 failures)`);
   console.log('=============================================================\n');
+  } finally {
+    __setTestMockStore(null);
+  }
   process.exit(0);
 }
 

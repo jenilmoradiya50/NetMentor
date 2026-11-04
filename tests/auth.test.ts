@@ -6,10 +6,10 @@ import {
   BRUTE_FORCE_COOKIE_NAME,
 } from '../api/_lib/crypto.ts';
 import { requireAuth, validateCsrf } from '../api/_lib/auth-guard.ts';
-import loginHandler from '../api/auth/login.ts';
-import sessionHandler from '../api/auth/session.ts';
-import logoutHandler from '../api/auth/logout.ts';
-import healthHandler from '../api/health.ts';
+import loginHandler from '../api/_routes/auth/login.ts';
+import sessionHandler from '../api/_routes/auth/session.ts';
+import logoutHandler from '../api/_routes/auth/logout.ts';
+import healthHandler from '../api/_routes/health.ts';
 import type { ApiRequest, ApiResponse, UserRole } from '../api/_lib/types.ts';
 import * as client from '../api/_lib/db/client.ts';
 

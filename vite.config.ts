@@ -44,89 +44,7 @@ function vercelApiDevPlugin(): Plugin {
           return next();
         }
 
-        // Map URL path to file in api directory
-        const apiPath = url.replace(/^\/api\/?/, '');
-        const segments = apiPath.split('/').filter(Boolean);
-
-        // Files or folders starting with an underscore are ignored from routing
-        if (segments.some((seg) => seg.startsWith('_'))) {
-          res.statusCode = 404;
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ error: 'Not Found', message: `Internal module not accessible` }));
-          return;
-        }
-
-        const dynamicParams: Record<string, string> = {};
-        let targetFile: string | null = null;
-
-        // Try direct file or index.ts first
-        const directFile = path.resolve(__dirname, 'api', ...segments) + '.ts';
-        const directIndex = path.resolve(__dirname, 'api', ...segments, 'index.ts');
-        if (fs.existsSync(directFile)) {
-          targetFile = directFile;
-        } else if (fs.existsSync(directIndex)) {
-          targetFile = directIndex;
-        } else {
-          // Dynamic route matching for [param] folders or files
-          let currentDir = path.resolve(__dirname, 'api');
-          for (let i = 0; i < segments.length; i++) {
-            const seg = segments[i];
-            const isLast = i === segments.length - 1;
-
-            if (isLast) {
-              const f = path.resolve(currentDir, seg + '.ts');
-              const idx = path.resolve(currentDir, seg, 'index.ts');
-              if (fs.existsSync(f)) {
-                targetFile = f;
-                break;
-              }
-              if (fs.existsSync(idx)) {
-                targetFile = idx;
-                break;
-              }
-              if (fs.existsSync(currentDir)) {
-                const entries = fs.readdirSync(currentDir);
-                const dynamicEntry = entries.find((e) => e.startsWith('[') && e.endsWith('].ts'));
-                if (dynamicEntry) {
-                  const match = dynamicEntry.match(/^\[([^\]]+)\]\.ts$/);
-                  const paramName = match ? match[1] : dynamicEntry.slice(1, -4);
-                  dynamicParams[paramName] = seg;
-                  targetFile = path.resolve(currentDir, dynamicEntry);
-                  break;
-                }
-              }
-            } else {
-              const directDir = path.resolve(currentDir, seg);
-              if (fs.existsSync(directDir) && fs.statSync(directDir).isDirectory()) {
-                currentDir = directDir;
-              } else if (fs.existsSync(currentDir)) {
-                const entries = fs.readdirSync(currentDir);
-                const dynamicDir = entries.find(
-                  (e) => e.startsWith('[') && e.endsWith(']') && fs.statSync(path.resolve(currentDir, e)).isDirectory()
-                );
-                if (dynamicDir) {
-                  const match = dynamicDir.match(/^\[([^\]]+)\]$/);
-                  const paramName = match ? match[1] : dynamicDir.slice(1, -1);
-                  dynamicParams[paramName] = seg;
-                  currentDir = path.resolve(currentDir, dynamicDir);
-                } else {
-                  break;
-                }
-              } else {
-                break;
-              }
-            }
-          }
-        }
-
-        if (!targetFile || !fs.existsSync(targetFile)) {
-          res.statusCode = 404;
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ error: 'Not Found', message: `API route ${url} not found` }));
-          return;
-        }
-
-        // Parse JSON body for mutation requests
+        // Parse JSON body for mutation requests if not already parsed
         let body: any = {};
         if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method || '')) {
           const buffers: Buffer[] = [];
@@ -143,7 +61,7 @@ function vercelApiDevPlugin(): Plugin {
           }
         }
 
-        // Parse query params
+        // Parse query params from URL search string
         const searchStr = (req.url || '').split('?')[1];
         const query: Record<string, string> = {};
         if (searchStr) {
@@ -153,12 +71,10 @@ function vercelApiDevPlugin(): Plugin {
           });
         }
 
-        // Augment req object
-        Object.assign(query, dynamicParams);
         (req as any).body = body;
         (req as any).query = query;
 
-        // Augment res object with Express/Vercel-like helpers
+        // Augment res object with Express/Vercel-like helpers if missing
         if (!(res as any).status) {
           (res as any).status = function (code: number) {
             this.statusCode = code;
@@ -173,20 +89,22 @@ function vercelApiDevPlugin(): Plugin {
         }
 
         try {
-          // Dynamically load and execute the TypeScript API route
-          const mod = await server.ssrLoadModule(targetFile);
-          if (typeof mod.default === 'function') {
-            await mod.default(req, res);
+          // Delegate directly to the production central router for 100% dev/prod parity
+          const routerModule = await server.ssrLoadModule(path.resolve(__dirname, 'api', '[...route].ts'));
+          if (typeof routerModule.default === 'function') {
+            await routerModule.default(req, res);
           } else {
             res.statusCode = 500;
             res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ error: 'Handler must export a default function' }));
+            res.end(JSON.stringify({ error: 'Router must export a default function' }));
           }
         } catch (err: any) {
           console.error(`[API Dev Error] ${url}:`, err);
-          res.statusCode = 500;
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ error: 'Internal Server Error', message: err?.message }));
+          if (!res.headersSent) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'Internal Server Error', message: err?.message }));
+          }
         }
       });
     },

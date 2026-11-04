@@ -12,8 +12,8 @@
  * 8. Strict API quota protection: zero live requests during test suite execution.
  */
 
-import conversationsHandler from '../api/ai/conversations.js';
-import tutorHandler from '../api/ai/tutor.js';
+import conversationsHandler from '../api/_routes/ai/conversations.js';
+import tutorHandler from '../api/_routes/ai/tutor.js';
 import * as client from '../api/_lib/db/client.js';
 import { createSignedSessionToken } from '../api/_lib/crypto.js';
 import { formatProviderLabel } from '../src/lib/api.js';

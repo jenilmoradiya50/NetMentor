@@ -13,8 +13,8 @@
  * 8. Quota Conservation: 0 live provider API requests are made during test execution.
  */
 
-import generateLessonHandler from '../api/ai/generate-lesson.js';
-import generatedLessonsHandler from '../api/lessons/generated.js';
+import generateLessonHandler from '../api/_routes/ai/generate-lesson.js';
+import generatedLessonsHandler from '../api/_routes/lessons/generated.js';
 import * as client from '../api/_lib/db/client.js';
 import { createSignedSessionToken } from '../api/_lib/crypto.js';
 import { validateGeneratedLesson, extractJsonFromText } from '../api/_lib/ai/lesson-validator.js';

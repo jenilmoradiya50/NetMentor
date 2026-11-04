@@ -14,7 +14,7 @@
  * 10. Zero database mutations or progress side-effects.
  */
 
-import tutorHandler from '../api/ai/tutor.js';
+import tutorHandler from '../api/_routes/ai/tutor.js';
 import type { ApiRequest, ApiResponse } from '../api/_lib/types.js';
 import { createSignedSessionToken } from '../api/_lib/crypto.js';
 import * as client from '../api/_lib/db/client.js';

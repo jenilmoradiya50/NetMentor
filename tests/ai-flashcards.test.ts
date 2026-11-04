@@ -12,9 +12,9 @@
  * 8. Quota Conservation: exactly 0 live provider API requests are made during test execution.
  */
 
-import generateFlashcardsHandler from '../api/ai/generate-flashcards.js';
-import lessonDeckHandler from '../api/flashcards/lesson-deck.js';
-import standaloneDeckHandler from '../api/flashcards/standalone-deck.js';
+import generateFlashcardsHandler from '../api/_routes/ai/generate-flashcards.js';
+import lessonDeckHandler from '../api/_routes/flashcards/lesson-deck.js';
+import standaloneDeckHandler from '../api/_routes/flashcards/standalone-deck.js';
 import * as client from '../api/_lib/db/client.js';
 import { createSignedSessionToken } from '../api/_lib/crypto.js';
 import { validateGeneratedFlashcards, extractJsonFromText } from '../api/_lib/ai/flashcard-validator.js';
