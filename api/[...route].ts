@@ -130,9 +130,35 @@ const DYNAMIC_ROUTES: DynamicRoutePattern[] = [
 ];
 
 /**
- * Extracts and normalizes the request pathname from URL string.
+ * Extracts and normalizes the request pathname from URL string, query, or proxy headers.
+ * Resolves both direct requests and Vercel edge rewrite dispatches (via ?__route= parameter).
  */
-export function extractPathname(rawUrl: string | undefined): string {
+export function extractPathname(
+  rawUrl: string | undefined,
+  query?: Record<string, any>,
+  headers?: Record<string, any>,
+): string {
+  // 1. Check if Vercel edge rewrite forwarded the route in query param (__route)
+  if (query?.__route && typeof query.__route === 'string') {
+    let r = query.__route.trim();
+    if (!r.startsWith('/')) r = '/' + r;
+    if (!r.startsWith('/api')) r = '/api' + r;
+    if (r.length > 1 && r.endsWith('/')) r = r.slice(0, -1);
+    return r;
+  }
+
+  // 2. Check proxy forwarding headers if present
+  const forwardedUri = headers?.['x-forwarded-uri'] || headers?.['x-original-url'];
+  if (forwardedUri && typeof forwardedUri === 'string') {
+    const qIdx = forwardedUri.indexOf('?');
+    let r = (qIdx >= 0 ? forwardedUri.slice(0, qIdx) : forwardedUri).trim();
+    if (!r.startsWith('/')) r = '/' + r;
+    if (!r.startsWith('/api')) r = '/api' + r;
+    if (r.length > 1 && r.endsWith('/')) r = r.slice(0, -1);
+    return r;
+  }
+
+  // 3. Fallback to rawUrl
   if (!rawUrl) return '';
   const questionIdx = rawUrl.indexOf('?');
   const pathPart = questionIdx >= 0 ? rawUrl.slice(0, questionIdx) : rawUrl;
@@ -219,8 +245,9 @@ export function matchRoute(pathname: string): { handler: RouteHandlerFn; params:
 export default async function handler(req: ApiRequest, res: ApiResponse): Promise<void> {
   ensureResponseHelpers(res);
 
-  const pathname = extractPathname(req.url);
   const urlQueryParams = parseQueryString(req.url);
+  const combinedQuery = { ...urlQueryParams, ...(req.query || {}) };
+  const pathname = extractPathname(req.url, combinedQuery, req.headers);
 
   // Match route
   const matched = matchRoute(pathname);
@@ -240,6 +267,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
     ...existingQuery,
     ...matched.params,
   };
+  delete req.query.__route;
 
   try {
     // Forward original request and response directly to handler

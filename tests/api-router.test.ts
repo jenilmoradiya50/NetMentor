@@ -123,6 +123,9 @@ async function runRouterTests() {
   assert(extractPathname('/api/flashcards/decks/') === '/api/flashcards/decks', 'Strips trailing slash');
   assert(extractPathname('/health') === '/api/health', 'Prepends /api when omitted');
   assert(extractPathname('') === '', 'Handles empty URL gracefully');
+  assert(extractPathname('/api/[...route]?__route=/api/health', { __route: '/api/health' }) === '/api/health', 'Resolves Vercel rewrite __route parameter');
+  assert(extractPathname('/api/[...route]?__route=health', { __route: 'health' }) === '/api/health', 'Prepends /api to relative __route parameter');
+  assert(extractPathname('/api/[...route]', {}, { 'x-forwarded-uri': '/api/auth/login' }) === '/api/auth/login', 'Resolves proxy x-forwarded-uri header');
 
   const qs1 = parseQueryString('/api/flashcards/cards?deckId=ccna-01&limit=20');
   assert(qs1.deckId === 'ccna-01' && qs1.limit === '20', 'Parses multiple query parameters correctly');
