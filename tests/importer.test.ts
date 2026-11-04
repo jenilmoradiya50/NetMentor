@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import JSZip from 'jszip';
 import { parseAnkiApkg, sanitizeAnkiHtml, MAX_APKG_SIZE } from '../api/_lib/anki-parser.js';
 import {
@@ -12,6 +13,7 @@ import {
   upsertCardProgress,
   withTransaction,
   query,
+  isDatabaseConfigured,
 } from '../api/_lib/db/client.js';
 
 // Automatically load environment files if present
@@ -20,7 +22,15 @@ if (typeof process.loadEnvFile === 'function') {
   try { process.loadEnvFile('.env'); } catch {}
 }
 
-const REAL_APKG_PATH = 'C:\\Users\\jenil\\.gemini\\antigravity\\scratch\\jeremy-repo\\Anki-FlashCards\\Day 01 Flashcards - Network Devices.apkg';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const FIXTURE_APKG_PATH = path.resolve(__dirname, 'fixtures', 'network-devices.apkg');
+const LOCAL_OVERRIDE_PATH = process.env.ANKI_TEST_DECK_PATH;
+
+// Use explicit local override path if provided and exists; otherwise use the repo fixture
+const TEST_APKG_PATH = (LOCAL_OVERRIDE_PATH && fs.existsSync(LOCAL_OVERRIDE_PATH))
+  ? LOCAL_OVERRIDE_PATH
+  : FIXTURE_APKG_PATH;
 
 async function runImporterTests() {
   console.log('=== STARTING NETMENTOR PHASE 5 FLASHCARD IMPORTER TEST SUITE ===\n');
@@ -40,7 +50,7 @@ async function runImporterTests() {
 
   // 1. Parsing Real Jeremy IT Lab CCNA .apkg File
   console.log('1. Testing Real Anki .apkg Archive Parsing (Day 01):');
-  const realFileBuf = fs.readFileSync(REAL_APKG_PATH);
+  const realFileBuf = fs.readFileSync(TEST_APKG_PATH);
   const parsed = await parseAnkiApkg(realFileBuf, 'Day 01 Flashcards - Network Devices.apkg');
 
   assert(parsed.cardCount === 22, `Expected 22 cards, found ${parsed.cardCount}`);
@@ -110,6 +120,15 @@ async function runImporterTests() {
 
   // 6. Multi-User Deck & Progress Isolation in Database
   console.log('\n6. Testing Multi-User Deck & Progress Isolation in Database:');
+  if (!isDatabaseConfigured()) {
+    console.log('   ℹ DATABASE_URL is not configured in this environment.');
+    console.log('   ℹ Skipping live PostgreSQL isolation checks (Sections 6-10) for offline/CI portability.\n');
+    console.log('=============================================================');
+    console.log(`✓ ALL ${passed} IMPORTER UNIT & PARSER TESTS PASSED CLEANLY! (0 failures)`);
+    console.log('=============================================================\n');
+    process.exit(0);
+  }
+
   // Look up seeded admin and standard user
   const usersRes = await query(`SELECT id, username FROM users WHERE username IN ('jenilmoradiya50@admin', 'jenilmoradiya50')`);
   const admin = usersRes.rows.find((u: any) => u.username === 'jenilmoradiya50@admin');
