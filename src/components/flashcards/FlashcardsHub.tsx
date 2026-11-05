@@ -3,11 +3,15 @@ import type { FlashcardDeck, CatalogDeck, DeckImportPreview } from '../../types/
 import { flashcardsApi } from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { ImportPreviewModal } from './ImportPreviewModal';
-import { StudyDeckView } from './StudyDeckView';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { SegmentedControl } from '../ui/SegmentedControl';
+
+// Lazy-load StudyDeckView for route-level code splitting
+const StudyDeckView = React.lazy(() =>
+  import('./StudyDeckView').then((m) => ({ default: m.StudyDeckView })),
+);
 import {
   Layers,
   Upload,
@@ -258,14 +262,27 @@ export const FlashcardsHub: React.FC<FlashcardsHubProps> = ({
   // If studying a deck, render study view
   if (studyingDeckId) {
     return (
-      <StudyDeckView
-        deckId={studyingDeckId}
-        onBack={() => {
-          setStudyingDeckId(null);
-          onClearStudyingDeck?.();
-          loadData();
-        }}
-      />
+      <React.Suspense
+        fallback={
+          <div className="flex flex-col items-center justify-center min-h-[50vh] p-8 text-center bg-canvas">
+            <div className="relative flex items-center justify-center mb-4">
+              <div className="absolute w-12 h-12 rounded-full bg-accent/20 animate-ping opacity-30" />
+              <Loader2 className="w-8 h-8 text-accent animate-spin relative z-10" />
+            </div>
+            <p className="text-xs font-mono uppercase tracking-wider text-slate-400">Loading Study Deck...</p>
+            <span className="text-[10px] text-slate-600 mt-1 font-mono">NetMentor Telecom Console</span>
+          </div>
+        }
+      >
+        <StudyDeckView
+          deckId={studyingDeckId}
+          onBack={() => {
+            setStudyingDeckId(null);
+            onClearStudyingDeck?.();
+            loadData();
+          }}
+        />
+      </React.Suspense>
     );
   }
 

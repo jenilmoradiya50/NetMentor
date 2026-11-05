@@ -1,14 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LoginPage } from './components/auth/LoginPage';
 import { DatabaseStatusBadge } from './components/common/DatabaseStatusBadge';
-import { FlashcardsHub } from './components/flashcards/FlashcardsHub';
 import { GenerateStandaloneFlashcardModal } from './components/flashcards/GenerateStandaloneFlashcardModal';
-import { PacketTracerLabsView } from './components/labs/PacketTracerLabsView';
-import { CurriculumHub } from './components/curriculum/CurriculumHub';
-import { PersonalLibraryHub } from './components/library/PersonalLibraryHub';
 import { GenerateLessonModal } from './components/library/GenerateLessonModal';
-import { GeneratedLessonReader } from './components/library/GeneratedLessonReader';
 import { Sheet } from './components/ui/Sheet';
 import { Button } from './components/ui/Button';
 import { Badge } from './components/ui/Badge';
@@ -38,10 +33,50 @@ import {
 } from './lib/api';
 import { GenerationManagerProvider, useGenerationManager } from './context/GenerationManagerContext';
 import { FloatingGenerationWidget } from './components/common/FloatingGenerationWidget';
-import { QuizzesHub } from './components/quizzes/QuizzesHub';
 import { GenerateQuizModal } from './components/quizzes/GenerateQuizModal';
-import { QuizPlayerView } from './components/quizzes/QuizPlayerView';
-import { QuizResultsView } from './components/quizzes/QuizResultsView';
+
+// Route-Level Code Splitting (Dynamic Lazy Imports)
+const CurriculumHub = lazy(() =>
+  import('./components/curriculum/CurriculumHub').then((m) => ({ default: m.CurriculumHub })),
+);
+const FlashcardsHub = lazy(() =>
+  import('./components/flashcards/FlashcardsHub').then((m) => ({ default: m.FlashcardsHub })),
+);
+const QuizzesHub = lazy(() =>
+  import('./components/quizzes/QuizzesHub').then((m) => ({ default: m.QuizzesHub })),
+);
+const QuizPlayerView = lazy(() =>
+  import('./components/quizzes/QuizPlayerView').then((m) => ({ default: m.QuizPlayerView })),
+);
+const QuizResultsView = lazy(() =>
+  import('./components/quizzes/QuizResultsView').then((m) => ({ default: m.QuizResultsView })),
+);
+const PacketTracerLabsView = lazy(() =>
+  import('./components/labs/PacketTracerLabsView').then((m) => ({ default: m.PacketTracerLabsView })),
+);
+const PersonalLibraryHub = lazy(() =>
+  import('./components/library/PersonalLibraryHub').then((m) => ({ default: m.PersonalLibraryHub })),
+);
+const GeneratedLessonReader = lazy(() =>
+  import('./components/library/GeneratedLessonReader').then((m) => ({ default: m.GeneratedLessonReader })),
+);
+
+function ViewLoadingFallback({ message = 'Loading module...' }: { message?: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center min-h-[45vh] p-8 text-center bg-canvas">
+      <div className="relative flex items-center justify-center mb-4">
+        <div className="absolute w-12 h-12 rounded-full bg-accent/20 animate-ping opacity-30" />
+        <Loader2 className="w-8 h-8 text-accent animate-spin relative z-10" />
+      </div>
+      <p className="text-xs font-mono uppercase tracking-wider text-slate-400">
+        {message}
+      </p>
+      <span className="text-[10px] text-slate-600 mt-1 font-mono">
+        NetMentor Telecom Console
+      </span>
+    </div>
+  );
+}
 
 type TabId = 'curriculum' | 'flashcards' | 'quizzes' | 'labs' | 'library';
 
@@ -593,86 +628,89 @@ function Dashboard() {
           isInsideLesson ? 'pb-8 md:pb-12' : 'pb-32 md:pb-12'
         }`}
       >
-        {mainTab === 'flashcards' ? (
-          <FlashcardsHub
-            initialStudyingDeckId={studyingDeckId}
-            onClearStudyingDeck={() => setStudyingDeckId(null)}
-          />
-        ) : mainTab === 'quizzes' ? (
-          activeAttemptId ? (
-            <QuizResultsView
-              attemptId={activeAttemptId}
-              initialAttempt={activeAttemptData}
-              onRetake={(quizId) => handleStartQuiz(quizId)}
-              onBackToHub={handleExitQuiz}
-              onViewLesson={handleOpenGeneratedLesson}
+        <Suspense fallback={<ViewLoadingFallback />}>
+          {mainTab === 'flashcards' ? (
+            <FlashcardsHub
+              initialStudyingDeckId={studyingDeckId}
+              onClearStudyingDeck={() => setStudyingDeckId(null)}
             />
-          ) : activeQuizId ? (
-            <QuizPlayerView
-              quizId={activeQuizId}
-              onComplete={(attemptId, attempt) => handleViewQuizResults(attemptId, attempt)}
-              onExit={handleExitQuiz}
-            />
+          ) : mainTab === 'quizzes' ? (
+            activeAttemptId ? (
+              <QuizResultsView
+                attemptId={activeAttemptId}
+                initialAttempt={activeAttemptData}
+                onRetake={(quizId) => handleStartQuiz(quizId)}
+                onBackToHub={handleExitQuiz}
+                onViewLesson={handleOpenGeneratedLesson}
+              />
+            ) : activeQuizId ? (
+              <QuizPlayerView
+                quizId={activeQuizId}
+                onComplete={(attemptId, attempt) => handleViewQuizResults(attemptId, attempt)}
+                onExit={handleExitQuiz}
+              />
+            ) : (
+              <QuizzesHub
+                onStartQuiz={handleStartQuiz}
+                onViewResults={handleViewQuizResults}
+                onOpenGenerator={() => {
+                  setQuizModalParams({});
+                  setIsQuizModalOpen(true);
+                }}
+                onViewLesson={handleOpenGeneratedLesson}
+              />
+            )
+          ) : mainTab === 'labs' ? (
+            <PacketTracerLabsView />
+          ) : mainTab === 'library' ? (
+            selectedGeneratedLesson ? (
+              <GeneratedLessonReader
+                lesson={selectedGeneratedLesson}
+                onBack={handleBackToLibraryHub}
+                onRename={handleRenameGeneratedLesson}
+                onDelete={handleDeleteGeneratedLesson}
+                onStudyDeck={handleStudyDeck}
+                onTakeQuiz={handleStartQuiz}
+                onGenerateQuiz={(lessonId, lessonTitle, lessonTopic) => {
+                  setQuizModalParams({
+                    lessonId,
+                    lessonTitle,
+                    initialTopic: lessonTopic,
+                  });
+                  setIsQuizModalOpen(true);
+                }}
+                onAskAi={(topic) => {
+                  openTutor({
+                    mode: 'general_qa',
+                    lessonTitle: topic,
+                  });
+                }}
+              />
+            ) : isLoadingGenLesson ? (
+              <div className="py-24 text-center space-y-3">
+                <div className="w-8 h-8 rounded-full border-2 border-accent border-t-transparent animate-spin mx-auto" />
+                <p className="text-xs text-white/50">Loading custom lesson...</p>
+              </div>
+            ) : (
+              <PersonalLibraryHub
+                onOpenLesson={handleOpenGeneratedLesson}
+                onCreateNewLesson={() => {
+                  setCreateLessonParams({});
+                  setIsCreateLessonModalOpen(true);
+                }}
+              />
+            )
           ) : (
-            <QuizzesHub
-              onStartQuiz={handleStartQuiz}
-              onViewResults={handleViewQuizResults}
-              onOpenGenerator={() => {
-                setQuizModalParams({});
-                setIsQuizModalOpen(true);
-              }}
-              onViewLesson={handleOpenGeneratedLesson}
+            <CurriculumHub
+              activeLessonId={activeLessonId}
+              onSelectLesson={handleSelectLesson}
+              onBackToCurriculum={handleBackToCurriculum}
+              onNavigateToFlashcards={() => handleTabChange('flashcards')}
+              onNavigateToLabs={() => handleTabChange('labs')}
             />
-          )
-        ) : mainTab === 'labs' ? (
-          <PacketTracerLabsView />
-        ) : mainTab === 'library' ? (
-          selectedGeneratedLesson ? (
-            <GeneratedLessonReader
-              lesson={selectedGeneratedLesson}
-              onBack={handleBackToLibraryHub}
-              onRename={handleRenameGeneratedLesson}
-              onDelete={handleDeleteGeneratedLesson}
-              onStudyDeck={handleStudyDeck}
-              onTakeQuiz={handleStartQuiz}
-              onGenerateQuiz={(lessonId, lessonTitle, lessonTopic) => {
-                setQuizModalParams({
-                  lessonId,
-                  lessonTitle,
-                  initialTopic: lessonTopic,
-                });
-                setIsQuizModalOpen(true);
-              }}
-              onAskAi={(topic) => {
-                openTutor({
-                  mode: 'general_qa',
-                  lessonTitle: topic,
-                });
-              }}
-            />
-          ) : isLoadingGenLesson ? (
-            <div className="py-24 text-center space-y-3">
-              <div className="w-8 h-8 rounded-full border-2 border-accent border-t-transparent animate-spin mx-auto" />
-              <p className="text-xs text-white/50">Loading custom lesson...</p>
-            </div>
-          ) : (
-            <PersonalLibraryHub
-              onOpenLesson={handleOpenGeneratedLesson}
-              onCreateNewLesson={() => {
-                setCreateLessonParams({});
-                setIsCreateLessonModalOpen(true);
-              }}
-            />
-          )
-        ) : (
-          <CurriculumHub
-            activeLessonId={activeLessonId}
-            onSelectLesson={handleSelectLesson}
-            onBackToCurriculum={handleBackToCurriculum}
-            onNavigateToFlashcards={() => handleTabChange('flashcards')}
-            onNavigateToLabs={() => handleTabChange('labs')}
-          />
-        )}
+          )}
+        </Suspense>
+
         {/* Mobile bottom clearance spacer ensuring content never sits behind the floating dock */}
         {!isInsideLesson && (
           <div className="h-20 md:hidden pointer-events-none" aria-hidden="true" />

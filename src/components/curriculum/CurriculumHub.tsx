@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   AlertCircle,
   RefreshCw,
+  Loader2,
 } from 'lucide-react';
 import { CURRICULUM_PATHS } from '../../data/curriculum/curriculum-data.js';
 import type {
@@ -17,11 +18,15 @@ import type {
   LessonProgressState,
   ExerciseAttemptRecord,
 } from '../../types/curriculum.js';
-import { LessonReader } from './LessonReader.js';
 import { curriculumApi } from '../../lib/api.js';
 import { Card } from '../ui/Card.js';
 import { Button } from '../ui/Button.js';
 import { Badge } from '../ui/Badge.js';
+
+// Lazy-load LessonReader for route-level code splitting
+const LessonReader = React.lazy(() =>
+  import('./LessonReader.js').then((m) => ({ default: m.LessonReader })),
+);
 
 interface CurriculumHubProps {
   onNavigateToFlashcards?: (deckId: string) => void;
@@ -228,25 +233,38 @@ export const CurriculumHub: React.FC<CurriculumHubProps> = ({
     const currentMastery = currentProgress?.masteryLevel || 'not_started';
 
     return (
-      <LessonReader
-        lesson={activeLesson.lesson}
-        pathTitle={activeLesson.pathTitle}
-        topicTitle={activeLesson.topicTitle}
-        initialMastery={currentMastery}
-        initialExerciseAttempts={currentProgress?.exerciseAttempts}
-        onBack={handleBack}
-        onSaveProgress={handleSaveLessonProgress}
-        onSaveExerciseAttempt={async (attempt) => {
-          await handleSaveLessonProgress(
-            activeLesson.lesson.id,
-            currentMastery,
-            currentProgress?.confidenceScore || 3,
-            attempt,
-          );
-        }}
-        onNavigateToFlashcards={onNavigateToFlashcards}
-        onNavigateToLabs={onNavigateToLabs}
-      />
+      <React.Suspense
+        fallback={
+          <div className="flex flex-col items-center justify-center min-h-[50vh] p-8 text-center bg-canvas">
+            <div className="relative flex items-center justify-center mb-4">
+              <div className="absolute w-12 h-12 rounded-full bg-accent/20 animate-ping opacity-30" />
+              <Loader2 className="w-8 h-8 text-accent animate-spin relative z-10" />
+            </div>
+            <p className="text-xs font-mono uppercase tracking-wider text-slate-400">Loading Lesson Reader...</p>
+            <span className="text-[10px] text-slate-600 mt-1 font-mono">NetMentor Telecom Console</span>
+          </div>
+        }
+      >
+        <LessonReader
+          lesson={activeLesson.lesson}
+          pathTitle={activeLesson.pathTitle}
+          topicTitle={activeLesson.topicTitle}
+          initialMastery={currentMastery}
+          initialExerciseAttempts={currentProgress?.exerciseAttempts}
+          onBack={handleBack}
+          onSaveProgress={handleSaveLessonProgress}
+          onSaveExerciseAttempt={async (attempt) => {
+            await handleSaveLessonProgress(
+              activeLesson.lesson.id,
+              currentMastery,
+              currentProgress?.confidenceScore || 3,
+              attempt,
+            );
+          }}
+          onNavigateToFlashcards={onNavigateToFlashcards}
+          onNavigateToLabs={onNavigateToLabs}
+        />
+      </React.Suspense>
     );
   }
 

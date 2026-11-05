@@ -124,4 +124,41 @@ export default defineConfig({
     port: 3000,
     open: false,
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          const normalized = id.replace(/\\/g, '/');
+          if (normalized.includes('/node_modules/')) {
+            if (
+              normalized.includes('/react/') ||
+              normalized.includes('/react-dom/') ||
+              normalized.includes('/scheduler/')
+            ) {
+              return 'vendor-react';
+            }
+            if (normalized.includes('/lucide-react/')) {
+              return 'vendor-icons';
+            }
+            if (
+              normalized.includes('/clsx/') ||
+              normalized.includes('/tailwind-merge/')
+            ) {
+              return 'vendor-utils';
+            }
+            if (
+              normalized.includes('/sql.js/') ||
+              normalized.includes('/jszip/')
+            ) {
+              return 'vendor-anki';
+            }
+          }
+          if (normalized.includes('/src/data/curriculum/')) {
+            return 'curriculum-data';
+          }
+        },
+      },
+    },
+    chunkSizeWarningLimit: 600,
+  },
 });
