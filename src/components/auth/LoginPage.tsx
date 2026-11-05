@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { DatabaseStatusBadge } from '../common/DatabaseStatusBadge';
 import { Button } from '../ui/Button';
-import { Lock, User, KeyRound, Eye, EyeOff, AlertCircle, Sparkles } from 'lucide-react';
+import { User, KeyRound, Eye, EyeOff, AlertCircle, Sparkles } from 'lucide-react';
 
 export function LoginPage() {
   const { login, enterDemoMode, isLoading, error, retryAfter, clearError } = useAuth();
@@ -47,8 +47,8 @@ export function LoginPage() {
       <div className="w-full max-w-md">
         {/* Brand Header */}
         <div className="text-center mb-6">
-          <div className="inline-flex h-14 w-14 rounded-2xl bg-accent/15 border border-accent/30 items-center justify-center text-accent mb-4 shadow-xl shadow-accent/10">
-            <Lock className="w-7 h-7" />
+          <div className="inline-flex h-16 w-16 rounded-2xl bg-surface-elevated border border-border-hairline items-center justify-center p-2 mb-4 shadow-xl shadow-accent/10">
+            <img src="/icon.svg" alt="NetMentor" className="w-full h-full object-contain" />
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-white heading-display">NetMentor</h1>
           <p className="text-xs sm:text-sm text-slate-400 mt-1">

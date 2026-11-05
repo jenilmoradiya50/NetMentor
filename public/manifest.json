@@ -1,0 +1,24 @@
+{
+  "name": "NetMentor - AI Networking Engineering & Mastery",
+  "short_name": "NetMentor",
+  "description": "AI-powered networking learning web application from fundamentals to CCNA and CCNP",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#090A0C",
+  "theme_color": "#090A0C",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

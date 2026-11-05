@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Chassis Gradient -->
+    <linearGradient id="chassisGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#16181E" />
+      <stop offset="100%" stop-color="#0E1013" />
+    </linearGradient>
+    
+    <!-- Signal Amber Packet Gradient -->
+    <linearGradient id="amberTransit" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FBBF24" />
+      <stop offset="100%" stop-color="#F59E0B" />
+    </linearGradient>
+
+    <!-- Node Glow Filter -->
+    <filter id="telemetryGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="0" stdDeviation="6" flood-color="#10B981" flood-opacity="0.6"/>
+    </filter>
+    <filter id="packetGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="#F59E0B" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <!-- Base Squircle Chassis for Mobile Home Screen -->
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="#090A0C" stroke="#232730" stroke-width="4"/>
+  <rect x="36" y="36" width="440" height="440" rx="96" fill="url(#chassisGrad)" stroke="#1F232B" stroke-width="2"/>
+
+  <!-- Network Grid Guide Lines (Subtle Hardware Traces) -->
+  <path d="M 120 96 L 120 416 M 256 96 L 256 416 M 392 96 L 392 416" stroke="#1F232B" stroke-width="1.5" stroke-dasharray="4 8" opacity="0.6"/>
+  <path d="M 96 120 L 416 120 M 96 256 L 416 256 M 96 392 L 416 392" stroke="#1F232B" stroke-width="1.5" stroke-dasharray="4 8" opacity="0.6"/>
+
+  <!-- Geometric "N" Router Topology Matrix -->
+  <!-- Left Trunk: Inbound Interface -->
+  <line x1="160" y1="368" x2="160" y2="152" stroke="#4B5563" stroke-width="28" stroke-linecap="round"/>
+  
+  <!-- Right Trunk: Outbound Uplink -->
+  <line x1="352" y1="360" x2="352" y2="144" stroke="#4B5563" stroke-width="28" stroke-linecap="round"/>
+
+  <!-- Central Diagonal Transit Path (Amber Signal Flow) -->
+  <line x1="160" y1="152" x2="352" y2="360" stroke="url(#amberTransit)" stroke-width="32" stroke-linecap="round" filter="url(#packetGlow)"/>
+
+  <!-- L2/L3 Node Endpoints -->
+  <!-- Bottom-Left Port Node -->
+  <circle cx="160" cy="368" r="20" fill="#111317" stroke="#4B5563" stroke-width="6"/>
+  <circle cx="160" cy="368" r="8" fill="#6B7280"/>
+
+  <!-- Bottom-Right Converged Uplink Node -->
+  <circle cx="352" cy="360" r="22" fill="#111317" stroke="#F59E0B" stroke-width="6"/>
+  <circle cx="352" cy="360" r="10" fill="#FBBF24"/>
+
+  <!-- Top-Right Gateway Node -->
+  <circle cx="352" cy="144" r="18" fill="#111317" stroke="#4B5563" stroke-width="6"/>
+  <circle cx="352" cy="144" r="7" fill="#6B7280"/>
+
+  <!-- Top-Left Telemetry Beacon Node (Converged Link Status) -->
+  <circle cx="160" cy="152" r="22" fill="#111317" stroke="#10B981" stroke-width="6" filter="url(#telemetryGlow)"/>
+  <circle cx="160" cy="152" r="10" fill="#34D399"/>
+
+  <!-- In-Flight Data Packet on Diagonal -->
+  <circle cx="256" cy="256" r="12" fill="#FFFBEB" filter="url(#packetGlow)"/>
+</svg>

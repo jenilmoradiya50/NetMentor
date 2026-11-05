@@ -10,7 +10,6 @@ import { Badge } from './components/ui/Badge';
 import { CURRICULUM_PATHS } from './data/curriculum/curriculum-data';
 import {
   ShieldCheck,
-  Terminal,
   Compass,
   LogOut,
   Clock,
@@ -496,8 +495,8 @@ function Dashboard() {
             </div>
           ) : (
             <div className="flex items-center gap-3">
-              <div className="h-9 w-9 rounded-xl bg-brand-600 flex items-center justify-center font-bold text-white shadow-md shadow-brand-500/25 border border-brand-400/30">
-                <Terminal className="w-5 h-5" />
+              <div className="h-9 w-9 rounded-xl bg-surface-elevated flex items-center justify-center shadow-md border border-border-hairline overflow-hidden p-0.5">
+                <img src="/icon.svg" alt="NetMentor" className="w-full h-full object-contain" />
               </div>
               <div>
                 <div className="flex items-center gap-2">
@@ -915,8 +914,8 @@ function AppContent() {
   if (isLoading) {
     return (
       <div className="min-h-screen bg-canvas text-slate-100 flex flex-col items-center justify-center p-4">
-        <div className="h-14 w-14 rounded-2xl bg-accent/15 border border-accent/30 flex items-center justify-center text-accent mb-4 shadow-xl shadow-accent/10 animate-pulse">
-          <Terminal className="w-7 h-7" />
+        <div className="h-16 w-16 rounded-2xl bg-surface-elevated border border-border-hairline flex items-center justify-center p-2 mb-4 shadow-xl shadow-accent/10 animate-pulse">
+          <img src="/icon.svg" alt="NetMentor" className="w-full h-full object-contain" />
         </div>
         <p className="text-sm font-medium text-slate-300 flex items-center gap-2">
           <Loader2 className="w-4 h-4 animate-spin text-accent" />
