@@ -53,7 +53,57 @@ export function isSafeUrl(url: string): boolean {
  * Unescapes standard markdown backslash-escaped punctuation characters.
  */
 export function unescapeMarkdown(text: string): string {
-  return text.replace(/\\([\\`*{}\[\]()#+\-.!_>~|])/g, '$1');
+  return text.replace(/\\([\\`*{}\[\]()#+\-.!_>~|$])/g, '$1');
+}
+
+/**
+ * Formats inline mathematical/networking formula expressions ($2^h$, $2^h - 2$, $\to$).
+ */
+export function formatInlineMath(math: string, keyPrefix: string): React.ReactNode {
+  // Replace standard LaTeX symbols used in networking formulas
+  const cleaned = math
+    .replace(/\\(to|rightarrow|longrightarrow)/g, '→')
+    .replace(/\\(leftarrow|longleftarrow)/g, '←')
+    .replace(/\\(le|leq)/g, '≤')
+    .replace(/\\(ge|geq)/g, '≥')
+    .replace(/\\times/g, '×')
+    .replace(/\\cdot/g, '·')
+    .replace(/\\neq/g, '≠')
+    .replace(/\\approx/g, '≈');
+
+  // Match power/superscripts such as 2^h, 2^{h-2}, 10^6
+  const parts: React.ReactNode[] = [];
+  const superRegex = /([a-zA-Z0-9]+)\^(\{([^}]+)\}|([a-zA-Z0-9]+))/g;
+  let lastIdx = 0;
+  let m: RegExpExecArray | null;
+
+  while ((m = superRegex.exec(cleaned)) !== null) {
+    if (m.index > lastIdx) {
+      parts.push(cleaned.slice(lastIdx, m.index));
+    }
+    const base = m[1];
+    const exp = m[3] || m[4];
+    parts.push(
+      <span key={`${keyPrefix}-sup-${m.index}`}>
+        {base}
+        <sup className="text-[9px] font-semibold text-accent-vivid ml-0.5">{exp}</sup>
+      </span>,
+    );
+    lastIdx = superRegex.lastIndex;
+  }
+
+  if (lastIdx < cleaned.length) {
+    parts.push(cleaned.slice(lastIdx));
+  }
+
+  return (
+    <span
+      key={keyPrefix}
+      className="inline-flex items-center px-1.5 py-0.5 mx-0.5 rounded bg-surface-elevated border border-border-hairline text-accent font-mono text-[11px] sm:text-xs select-all"
+    >
+      {parts.length > 0 ? parts : cleaned}
+    </span>
+  );
 }
 
 export function renderInlineMarkdown(text?: string | null): React.ReactNode[] {
@@ -63,8 +113,9 @@ export function renderInlineMarkdown(text?: string | null): React.ReactNode[] {
   // - Handles backslash escapes: (?<!\\)
   // - Restricts underscore emphasis to word boundaries: (?<![a-zA-Z0-9\\])...(?![a-zA-Z0-9])
   // - Eliminates intra-word underscore accidental matching (e.g. AS_PATH, NEXT_HOP)
+  // - Handles inline math expressions ($2^h$, $2^h - 2$, $\to$)
   const tokenRegex =
-    /((?<!\\)`[^`]+`|(?<!\\)\[[^\]]+\]\([^)]+\)|(?<!\\)\*\*\*(?!\s|\*\*\*)[^*]+(?<!\s|\*\*\*)\*\*\*|(?<![a-zA-Z0-9\\])___(?!\s|___)[^_]+(?<!\s|___)___(?![a-zA-Z0-9])|(?<!\\)\*\*(?!\s|\*\*)[^*]+(?<!\s|\*\*)\*\*|(?<![a-zA-Z0-9\\])__(?!\s|__)[^_]+(?<!\s|__)__(?![a-zA-Z0-9])|(?<!\\)\*(?!\s|\*)[^*]+(?<!\s|\*)\*|(?<![a-zA-Z0-9\\])_(?!\s|_)[^_]+(?<!\s|_)_(?![a-zA-Z0-9]))/g;
+    /((?<!\\)`[^`]+`|(?<!\\)\[[^\]]+\]\([^)]+\)|(?<!\\)\*\*\*(?!\s|\*\*\*)[^*]+(?<!\s|\*\*\*)\*\*\*|(?<![a-zA-Z0-9\\])___(?!\s|___)[^_]+(?<!\s|___)___(?![a-zA-Z0-9])|(?<!\\)\*\*(?!\s|\*\*)[^*]+(?<!\s|\*\*)\*\*|(?<![a-zA-Z0-9\\])__(?!\s|__)[^_]+(?<!\s|__)__(?![a-zA-Z0-9])|(?<!\\)\*(?!\s|\*)[^*]+(?<!\s|\*)\*|(?<![a-zA-Z0-9\\])_(?!\s|_)[^_]+(?<!\s|_)_(?![a-zA-Z0-9])|(?<!\\)\$(?!\s|\$)[^$\n]+?(?<!\s|\$)\$)/g;
 
   const nodes: React.ReactNode[] = [];
   let lastIndex = 0;
@@ -142,6 +193,9 @@ export function renderInlineMarkdown(text?: string | null): React.ReactNode[] {
           {renderInlineMarkdown(inner)}
         </em>,
       );
+    } else if (token.startsWith('$') && token.endsWith('$') && token.length > 2) {
+      const innerMath = token.slice(1, -1);
+      nodes.push(formatInlineMath(innerMath, key));
     }
 
     lastIndex = tokenRegex.lastIndex;
@@ -428,24 +482,24 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({ code, lang }) => {
   };
 
   return (
-    <div className="my-3 overflow-hidden rounded-xl bg-canvas-subtle/90 border border-white/[0.08] shadow-inner-light">
-      <div className="flex items-center justify-between px-3 py-1.5 bg-surface-subtle/80 border-b border-white/[0.06] text-[10px] font-mono text-slate-400 select-none">
+    <div className="my-3 overflow-hidden rounded-xl bg-canvas-subtle/90 border border-border-hairline shadow-inner-light">
+      <div className="flex items-center justify-between px-3 py-1 bg-surface-subtle/80 border-b border-border-hairline text-[10px] font-mono text-slate-400 select-none">
         <span className="uppercase tracking-wider">{lang || 'command'}</span>
         <button
           type="button"
           onClick={handleCopy}
-          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 min-h-[44px] min-w-[44px] rounded-lg text-slate-400 hover:text-white hover:bg-surface-interactive transition-colors touch-target-44"
           aria-label={copied ? 'Copied code' : 'Copy code to clipboard'}
         >
           {copied ? (
             <>
-              <Check className="w-3 h-3 text-emerald-400" />
-              <span className="text-emerald-400 font-sans text-[10px]">Copied!</span>
+              <Check className="w-3.5 h-3.5 text-status-converged" />
+              <span className="text-status-converged font-sans text-xs font-medium">Copied!</span>
             </>
           ) : (
             <>
-              <Copy className="w-3 h-3" />
-              <span className="font-sans text-[10px]">Copy</span>
+              <Copy className="w-3.5 h-3.5" />
+              <span className="font-sans text-xs font-medium">Copy</span>
             </>
           )}
         </button>
@@ -532,39 +586,19 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({ content, className =
             return (
               <div
                 key={key}
-                className="my-4 overflow-x-auto rounded-xl border border-white/[0.08] bg-surface-subtle/50 shadow-sm max-w-full"
+                className="my-4 relative rounded-xl border border-border-hairline bg-surface-subtle/50 shadow-sm max-w-full overflow-hidden group"
               >
-                <table className="w-full text-left text-xs sm:text-sm border-collapse min-w-[480px]">
-                  <thead>
-                    <tr className="border-b border-white/[0.08] bg-surface-elevated/70">
-                      {block.headers.map((h, hIdx) => {
-                        const align = block.alignments[hIdx] || 'left';
-                        return (
-                          <th
-                            key={hIdx}
-                            className={`p-3 font-semibold text-white ${
-                              align === 'center'
-                                ? 'text-center'
-                                : align === 'right'
-                                ? 'text-right'
-                                : 'text-left'
-                            }`}
-                          >
-                            {renderInlineMarkdown(h)}
-                          </th>
-                        );
-                      })}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/[0.06] text-slate-300">
-                    {block.rows.map((row, rIdx) => (
-                      <tr key={rIdx} className="hover:bg-white/[0.02] transition-colors">
-                        {row.map((cell, cIdx) => {
-                          const align = block.alignments[cIdx] || 'left';
+                {/* Horizontal scroll container */}
+                <div className="overflow-x-auto max-w-full scrollbar-thin scrollbar-thumb-surface-interactive">
+                  <table className="w-full text-left text-xs sm:text-sm border-collapse min-w-[480px]">
+                    <thead>
+                      <tr className="border-b border-border-hairline bg-surface-elevated/70">
+                        {block.headers.map((h, hIdx) => {
+                          const align = block.alignments[hIdx] || 'left';
                           return (
-                            <td
-                              key={cIdx}
-                              className={`p-3 leading-relaxed ${
+                            <th
+                              key={hIdx}
+                              className={`p-3 font-semibold text-white ${
                                 align === 'center'
                                   ? 'text-center'
                                   : align === 'right'
@@ -572,14 +606,49 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({ content, className =
                                   : 'text-left'
                               }`}
                             >
-                              {renderInlineMarkdown(cell)}
-                            </td>
+                              {renderInlineMarkdown(h)}
+                            </th>
                           );
                         })}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-border-hairline/60 text-slate-300">
+                      {block.rows.map((row, rIdx) => (
+                        <tr key={rIdx} className="hover:bg-white/[0.02] transition-colors">
+                          {row.map((cell, cIdx) => {
+                            const align = block.alignments[cIdx] || 'left';
+                            return (
+                              <td
+                                key={cIdx}
+                                className={`p-3 leading-relaxed ${
+                                  align === 'center'
+                                    ? 'text-center'
+                                    : align === 'right'
+                                    ? 'text-right'
+                                    : 'text-left'
+                                }`}
+                              >
+                                {renderInlineMarkdown(cell)}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Subtle right-edge scroll cue gradient mask for mobile */}
+                <div
+                  className="pointer-events-none sm:hidden absolute top-0 bottom-7 right-0 w-8 bg-gradient-to-l from-surface-subtle via-surface-subtle/50 to-transparent"
+                  aria-hidden="true"
+                />
+
+                {/* Mobile scroll cue helper bar */}
+                <div className="sm:hidden px-3 py-1 bg-surface-elevated/40 border-t border-border-hairline flex items-center justify-between text-[10px] text-slate-500 font-mono">
+                  <span>← Swipe table horizontally →</span>
+                  <span className="text-accent/80 font-sans">Scroll for more</span>
+                </div>
               </div>
             );
           }

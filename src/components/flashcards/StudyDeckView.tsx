@@ -59,6 +59,13 @@ export const StudyDeckView: React.FC<StudyDeckViewProps> = ({ deckId, onBack }) 
 
   // Flip card
   const handleToggleFlip = () => {
+    // If the student is highlighting or selecting text (e.g. copying CIDR / CLI commands), abort flip
+    if (typeof window !== 'undefined') {
+      const selection = window.getSelection();
+      if (selection && selection.toString().trim().length > 0) {
+        return;
+      }
+    }
     setIsFlipped((prev) => !prev);
   };
 
@@ -224,7 +231,7 @@ export const StudyDeckView: React.FC<StudyDeckViewProps> = ({ deckId, onBack }) 
   const masteredTotal = cards.filter((c) => c.progress?.status === 'mastered').length;
 
   return (
-    <div className="max-w-3xl mx-auto space-y-5 sm:space-y-6">
+    <div className="max-w-3xl mx-auto space-y-5 sm:space-y-6 pb-32 sm:pb-20">
       {/* Top Study Bar */}
       <div className="flex items-center justify-between gap-3">
         <Button
@@ -381,7 +388,7 @@ export const StudyDeckView: React.FC<StudyDeckViewProps> = ({ deckId, onBack }) 
           type="button"
           onClick={() => handleMarkProgress('review')}
           disabled={savingProgress}
-          className="p-3.5 sm:p-4 rounded-2xl bg-warning/15 hover:bg-warning/25 text-amber-300 border border-warning/30 font-semibold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all min-h-[48px] press-scale shadow-sm disabled:opacity-40"
+          className="p-3.5 sm:p-4 rounded-2xl bg-warning/15 hover:bg-warning/25 text-amber-300 border border-warning/30 font-semibold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all min-h-[48px] press-scale shadow-sm disabled:opacity-40 touch-target-44"
         >
           <XCircle className="w-4 h-4 text-warning" />
           <span>Needs Review <span className="hidden sm:inline font-mono text-xs">(1 / ←)</span></span>
@@ -391,7 +398,7 @@ export const StudyDeckView: React.FC<StudyDeckViewProps> = ({ deckId, onBack }) 
           type="button"
           onClick={() => handleMarkProgress('mastered')}
           disabled={savingProgress}
-          className="p-3.5 sm:p-4 rounded-2xl bg-success/15 hover:bg-success/25 text-emerald-300 border border-success/30 font-semibold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all min-h-[48px] press-scale shadow-sm disabled:opacity-40"
+          className="p-3.5 sm:p-4 rounded-2xl bg-success/15 hover:bg-success/25 text-emerald-300 border border-success/30 font-semibold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all min-h-[48px] press-scale shadow-sm disabled:opacity-40 touch-target-44"
         >
           <CheckCircle2 className="w-4 h-4 text-success" />
           <span>I Know This <span className="hidden sm:inline font-mono text-xs">(2 / →)</span></span>

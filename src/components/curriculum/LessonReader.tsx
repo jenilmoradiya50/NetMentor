@@ -99,7 +99,7 @@ export const LessonReader: React.FC<LessonReaderProps> = ({
       {/* Lesson Hierarchy Breadcrumb Navigation */}
       <nav
         aria-label="Curriculum Breadcrumb"
-        className="flex items-center gap-1.5 text-xs text-slate-400 border-b border-white/[0.08] pb-3 overflow-x-auto no-scrollbar"
+        className="flex items-center gap-1.5 text-xs text-slate-400 border-b border-border-hairline pb-2.5 sm:pb-3 overflow-x-auto no-scrollbar whitespace-nowrap"
       >
         <span className="truncate max-w-[130px] sm:max-w-[200px]">{pathTitle}</span>
         <ChevronRight className="w-3.5 h-3.5 text-slate-600 flex-shrink-0" />
@@ -109,8 +109,8 @@ export const LessonReader: React.FC<LessonReaderProps> = ({
       </nav>
 
       {/* Lesson Header Card */}
-      <Card variant="elevated" padding="lg" className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
+      <Card variant="elevated" padding="md" className="space-y-3 sm:space-y-4">
+        <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <Badge variant="blue" size="sm">
               {lesson.difficulty}

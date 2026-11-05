@@ -482,7 +482,7 @@ export const AiTutorDrawer: React.FC<AiTutorDrawerProps> = ({
               <button
                 type="button"
                 onClick={() => setShowHistory(false)}
-                className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/[0.08] transition-colors flex items-center gap-1 text-xs"
+                className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-surface-interactive transition-colors flex items-center gap-1 text-xs min-h-[44px] touch-target-44"
                 aria-label="Back to chat"
               >
                 <ChevronLeft className="w-4 h-4" />
@@ -516,7 +516,7 @@ export const AiTutorDrawer: React.FC<AiTutorDrawerProps> = ({
               size="sm"
               onClick={handleNewChat}
               icon={<Plus className="w-3.5 h-3.5 text-accent" />}
-              className="text-[11px] h-7 px-2"
+              className="text-[11px] min-h-[44px] h-auto py-2 px-2.5 touch-target-44"
               aria-label="Start New Chat"
             >
               <span className="hidden xs:inline">New Chat</span>
@@ -525,10 +525,10 @@ export const AiTutorDrawer: React.FC<AiTutorDrawerProps> = ({
             <button
               type="button"
               onClick={() => setShowHistory(!showHistory)}
-              className={`p-1.5 rounded-lg transition-colors press-scale text-xs ${
+              className={`p-2.5 rounded-lg transition-colors press-scale text-xs min-h-[44px] min-w-[44px] flex items-center justify-center touch-target-44 ${
                 showHistory
                   ? 'bg-accent/20 text-accent border border-accent/40'
-                  : 'text-slate-400 hover:text-white hover:bg-white/[0.06]'
+                  : 'text-slate-400 hover:text-white hover:bg-surface-interactive'
               }`}
               title="Chat History"
               aria-label="Toggle Conversation History"
@@ -539,7 +539,7 @@ export const AiTutorDrawer: React.FC<AiTutorDrawerProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.06] transition-colors press-scale"
+              className="p-2.5 rounded-lg text-slate-400 hover:text-white hover:bg-surface-interactive transition-colors press-scale min-h-[44px] min-w-[44px] flex items-center justify-center touch-target-44"
               aria-label="Close AI Tutor Panel"
             >
               <X className="w-4 h-4" />
@@ -878,7 +878,7 @@ export const AiTutorDrawer: React.FC<AiTutorDrawerProps> = ({
             </div>
 
             {/* Input Bar */}
-            <div className="p-3 border-t border-white/[0.08] bg-surface-subtle/90 space-y-2">
+            <div className="p-3 pb-[max(0.75rem,env(safe-area-inset-bottom,0.75rem))] border-t border-border-hairline bg-surface-subtle/90 space-y-2">
               <div className="relative flex items-end gap-2 bg-canvas rounded-xl border border-white/[0.12] p-2 focus-within:border-accent focus-within:ring-1 focus-within:ring-accent">
                 <textarea
                   ref={inputRef}
@@ -904,8 +904,8 @@ export const AiTutorDrawer: React.FC<AiTutorDrawerProps> = ({
                   size="sm"
                   disabled={loading || inputValue.trim().length === 0}
                   onClick={() => handleSendMessage()}
-                  icon={<Send className="w-3.5 h-3.5" />}
-                  className="h-9 w-9 p-0 flex items-center justify-center rounded-lg flex-shrink-0"
+                  icon={<Send className="w-4 h-4" />}
+                  className="h-11 w-11 min-h-[44px] min-w-[44px] p-0 flex items-center justify-center rounded-lg flex-shrink-0 touch-target-44"
                   aria-label="Send query"
                 >
                   <span className="sr-only">Send</span>

@@ -17,11 +17,11 @@ export const Card = React.forwardRef<HTMLDivElement, CardProps>(
     ref,
   ) => {
     const variantStyles = {
-      default: 'bg-surface/90 border border-slate-800/80 shadow-sm text-slate-100',
-      elevated: 'bg-surface-elevated/95 border border-slate-700/80 shadow-md shadow-black/30 text-slate-100',
-      subtle: 'bg-surface-subtle/80 border border-slate-800/60 text-slate-200',
+      default: 'bg-surface/90 border border-border-hairline shadow-sm text-slate-100',
+      elevated: 'bg-surface-elevated/95 border border-border-hairline shadow-md shadow-black/30 text-slate-100',
+      subtle: 'bg-surface-subtle/80 border border-border-hairline text-slate-200',
       interactive:
-        'bg-surface/90 hover:bg-surface border border-slate-800/80 hover:border-brand-500/50 hover:shadow-lg hover:shadow-brand-500/5 transition-all cursor-pointer press-scale-subtle text-slate-100',
+        'bg-surface/90 hover:bg-surface border border-border-hairline hover:border-accent/50 hover:shadow-lg hover:shadow-accent/5 transition-all cursor-pointer press-scale-subtle text-slate-100',
     };
 
     const paddingStyles = {

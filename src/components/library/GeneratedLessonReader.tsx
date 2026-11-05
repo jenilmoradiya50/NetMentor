@@ -16,6 +16,7 @@ import {
   Play,
   FileQuestion,
   Award,
+  MoreHorizontal,
 } from 'lucide-react';
 import {
   type GeneratedLessonDetail,
@@ -52,6 +53,7 @@ export const GeneratedLessonReader: React.FC<GeneratedLessonReaderProps> = ({
 
   // Flashcards state
   const [isFlashcardsModalOpen, setIsFlashcardsModalOpen] = useState(false);
+  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const [lessonDeck, setLessonDeck] = useState<FlashcardDeck | null>(null);
   const [deckCards, setDeckCards] = useState<FlashcardItem[]>([]);
 
@@ -176,11 +178,11 @@ export const GeneratedLessonReader: React.FC<GeneratedLessonReaderProps> = ({
 
   return (
     <div className="max-w-4xl mx-auto p-3 sm:p-6 space-y-6 animate-fade-in">
-      {/* Top Navigation Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-white/10">
+      {/* Top Desktop Navigation & Action Bar */}
+      <div className="hidden md:flex items-center justify-between gap-3 pb-3 border-b border-border-hairline">
         <button
           onClick={onBack}
-          className="flex items-center gap-2 text-xs font-semibold text-white/70 hover:text-white transition-colors px-3 py-1.5 rounded-lg hover:bg-white/5"
+          className="flex items-center gap-2 text-xs font-semibold text-slate-300 hover:text-white transition-colors px-3 py-2 rounded-xl hover:bg-surface-interactive border border-transparent hover:border-border-hairline touch-target-44"
         >
           <ArrowLeft className="w-4 h-4" />
           Back to Personal Library
@@ -192,7 +194,7 @@ export const GeneratedLessonReader: React.FC<GeneratedLessonReaderProps> = ({
               <button
                 type="button"
                 onClick={() => onStudyDeck?.(lessonDeck.id)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-accent text-white hover:bg-accent-hover shadow-sm transition-all"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-accent text-canvas hover:bg-accent-hover shadow-sm transition-all touch-target-44"
                 title={`Study ${lessonDeck.cardCount} flashcards for this lesson`}
               >
                 <Play className="w-3.5 h-3.5 fill-current" />
@@ -201,7 +203,7 @@ export const GeneratedLessonReader: React.FC<GeneratedLessonReaderProps> = ({
               <button
                 type="button"
                 onClick={() => setIsFlashcardsModalOpen(true)}
-                className="p-1.5 text-white/50 hover:text-white hover:bg-white/5 rounded-lg transition-colors"
+                className="p-2 text-slate-400 hover:text-white hover:bg-surface-interactive rounded-xl transition-colors border border-border-hairline touch-target-44"
                 title="Edit or add flashcards"
               >
                 <Layers className="w-4 h-4 text-purple-400" />
@@ -211,7 +213,7 @@ export const GeneratedLessonReader: React.FC<GeneratedLessonReaderProps> = ({
             <button
               type="button"
               onClick={() => setIsFlashcardsModalOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-purple-500/15 border border-purple-500/30 text-purple-300 hover:bg-purple-500/25 transition-all shadow-sm"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-purple-500/15 border border-purple-500/30 text-purple-300 hover:bg-purple-500/25 transition-all shadow-sm touch-target-44"
               title="Generate active-recall flashcards from this lesson"
             >
               <Layers className="w-3.5 h-3.5 text-purple-400" />
@@ -224,27 +226,27 @@ export const GeneratedLessonReader: React.FC<GeneratedLessonReaderProps> = ({
             <button
               type="button"
               onClick={() => onTakeQuiz?.(lessonQuiz.id)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/25 transition-all shadow-sm"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-accent/15 border border-accent/30 text-accent hover:bg-accent/25 transition-all shadow-sm touch-target-44"
               title="Take or retake the assessment quiz for this lesson"
             >
-              <FileQuestion className="w-3.5 h-3.5 text-cyan-400" />
+              <FileQuestion className="w-3.5 h-3.5 text-accent" />
               {lessonQuiz.latestAttempt ? `Quiz (${lessonQuiz.latestAttempt.percentage}%)` : 'Take Quiz'}
             </button>
           ) : (
             <button
               type="button"
               onClick={() => onGenerateQuiz?.(lesson.id, lesson.title, content.topic)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/25 transition-all shadow-sm"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-accent/15 border border-accent/30 text-accent hover:bg-accent/25 transition-all shadow-sm touch-target-44"
               title="Generate an AI assessment quiz for this lesson"
             >
-              <FileQuestion className="w-3.5 h-3.5 text-cyan-400" />
+              <FileQuestion className="w-3.5 h-3.5 text-accent" />
               Generate Quiz
             </button>
           )}
 
           <button
             onClick={() => onAskAi(content.topic, lesson.id)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-accent/15 border border-accent/30 text-accent hover:bg-accent/25 transition-all"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-accent/15 border border-accent/30 text-accent hover:bg-accent/25 transition-all touch-target-44"
             title="Ask AI Tutor about this topic"
           >
             <Sparkles className="w-3.5 h-3.5" />
@@ -253,7 +255,7 @@ export const GeneratedLessonReader: React.FC<GeneratedLessonReaderProps> = ({
 
           <button
             onClick={() => setIsEditingTitle(true)}
-            className="p-1.5 text-white/50 hover:text-white hover:bg-white/5 rounded-lg transition-colors"
+            className="p-2 text-slate-400 hover:text-white hover:bg-surface-interactive rounded-xl transition-colors border border-border-hairline touch-target-44"
             title="Rename lesson"
           >
             <Edit2 className="w-4 h-4" />
@@ -261,11 +263,161 @@ export const GeneratedLessonReader: React.FC<GeneratedLessonReaderProps> = ({
 
           <button
             onClick={() => setShowDeleteConfirm(true)}
-            className="p-1.5 text-danger/70 hover:text-danger hover:bg-danger/10 rounded-lg transition-colors"
+            className="p-2 text-danger hover:text-red-300 hover:bg-danger/10 rounded-xl transition-colors border border-border-hairline touch-target-44"
             title="Delete lesson"
           >
             <Trash2 className="w-4 h-4" />
           </button>
+        </div>
+      </div>
+
+      {/* Top Mobile Single-Row Compact Toolbar (Reclaims ~100px screen height on mobile) */}
+      <div className="flex md:hidden items-center justify-between gap-2 pb-2.5 border-b border-border-hairline relative">
+        {/* Primary Reading / AI Tutor Action */}
+        <button
+          onClick={() => onAskAi(content.topic, lesson.id)}
+          className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs font-bold bg-accent/15 border border-accent/30 text-accent hover:bg-accent/25 transition-all touch-target-44"
+          title="Ask AI Tutor about this topic"
+        >
+          <Sparkles className="w-3.5 h-3.5" />
+          <span>Discuss with AI Tutor</span>
+        </button>
+
+        {/* Quick Study Deck Button (if deck exists) */}
+        {lessonDeck && (
+          <button
+            type="button"
+            onClick={() => onStudyDeck?.(lessonDeck.id)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-accent text-canvas hover:bg-accent-hover transition-all touch-target-44 shadow-sm"
+            title={`Study ${lessonDeck.cardCount} flashcards`}
+          >
+            <Play className="w-3.5 h-3.5 fill-current" />
+            <span className="hidden xs:inline">Cards ({lessonDeck.cardCount})</span>
+          </button>
+        )}
+
+        {/* More Actions (...) Popover Trigger */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setIsMoreMenuOpen((prev) => !prev)}
+            className={`p-2 rounded-xl border transition-colors touch-target-44 ${
+              isMoreMenuOpen
+                ? 'bg-surface-interactive text-white border-accent'
+                : 'bg-surface-elevated text-slate-300 border-border-hairline hover:text-white hover:bg-surface-interactive'
+            }`}
+            title="More actions"
+            aria-label="More actions"
+            aria-expanded={isMoreMenuOpen}
+          >
+            <MoreHorizontal className="w-4 h-4" />
+          </button>
+
+          {/* More Actions Dropdown Menu */}
+          {isMoreMenuOpen && (
+            <>
+              <div
+                className="fixed inset-0 z-40"
+                onClick={() => setIsMoreMenuOpen(false)}
+              />
+              <div className="absolute right-0 top-12 z-50 w-56 rounded-xl bg-surface-elevated border border-border-hairline shadow-2xl p-1.5 space-y-1 animate-in fade-in slide-in-from-top-2 duration-150">
+                {/* Flashcards option */}
+                {lessonDeck ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMoreMenuOpen(false);
+                        onStudyDeck?.(lessonDeck.id);
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-left font-medium text-slate-200 hover:bg-surface-interactive hover:text-white rounded-lg transition-colors touch-target-44"
+                    >
+                      <Play className="w-4 h-4 text-accent fill-current" />
+                      <span>Study Flashcards ({lessonDeck.cardCount})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMoreMenuOpen(false);
+                        setIsFlashcardsModalOpen(true);
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-left font-medium text-slate-200 hover:bg-surface-interactive hover:text-white rounded-lg transition-colors touch-target-44"
+                    >
+                      <Layers className="w-4 h-4 text-purple-400" />
+                      <span>Manage Flashcards</span>
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      setIsFlashcardsModalOpen(true);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-left font-medium text-slate-200 hover:bg-surface-interactive hover:text-white rounded-lg transition-colors touch-target-44"
+                  >
+                    <Layers className="w-4 h-4 text-purple-400" />
+                    <span>Generate Flashcards</span>
+                  </button>
+                )}
+
+                {/* Quiz option */}
+                {lessonQuiz ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      onTakeQuiz?.(lessonQuiz.id);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-left font-medium text-slate-200 hover:bg-surface-interactive hover:text-white rounded-lg transition-colors touch-target-44"
+                  >
+                    <FileQuestion className="w-4 h-4 text-accent" />
+                    <span>{lessonQuiz.latestAttempt ? `Retake Quiz (${lessonQuiz.latestAttempt.percentage}%)` : 'Take Quiz'}</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      onGenerateQuiz?.(lesson.id, lesson.title, content.topic);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-left font-medium text-slate-200 hover:bg-surface-interactive hover:text-white rounded-lg transition-colors touch-target-44"
+                  >
+                    <FileQuestion className="w-4 h-4 text-accent" />
+                    <span>Generate Quiz</span>
+                  </button>
+                )}
+
+                <div className="border-t border-border-hairline my-1" />
+
+                {/* Rename option */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMoreMenuOpen(false);
+                    setIsEditingTitle(true);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-left font-medium text-slate-300 hover:bg-surface-interactive hover:text-white rounded-lg transition-colors touch-target-44"
+                >
+                  <Edit2 className="w-4 h-4 text-slate-400" />
+                  <span>Rename Lesson</span>
+                </button>
+
+                {/* Delete option */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMoreMenuOpen(false);
+                    setShowDeleteConfirm(true);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-left font-medium text-danger hover:bg-danger/10 rounded-lg transition-colors touch-target-44"
+                >
+                  <Trash2 className="w-4 h-4 text-danger" />
+                  <span>Delete Lesson</span>
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
 

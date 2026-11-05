@@ -438,23 +438,23 @@ function Dashboard() {
       <header className="glass-nav sticky top-0 z-30 safe-top">
         <div className="max-w-6xl mx-auto px-4 py-2.5 flex items-center justify-between gap-3">
           {/* Brand Identity / Sticky Lesson Back Navigation */}
-          {isInsideLesson && activeLessonData ? (
+          {isInsideLesson && (activeLessonData || selectedGeneratedLesson) ? (
             <div className="flex items-center gap-2 min-w-0 flex-1 sm:flex-initial">
               <button
                 type="button"
-                onClick={handleBackToCurriculum}
-                className="flex items-center gap-2 text-slate-200 hover:text-white transition-colors press-scale py-1 -ml-1 pl-1 pr-2.5 rounded-xl hover:bg-white/[0.06] min-h-[44px] group"
-                aria-label="Back to Curriculum"
+                onClick={activeLessonData ? handleBackToCurriculum : handleBackToLibraryHub}
+                className="flex items-center gap-2 text-slate-200 hover:text-white transition-colors press-scale py-1 -ml-1 pl-1 pr-2.5 rounded-xl hover:bg-surface-interactive min-h-[44px] touch-target-44 group"
+                aria-label={activeLessonData ? "Back to Curriculum" : "Back to Personal Library"}
               >
-                <div className="w-8 h-8 rounded-xl bg-surface-elevated border border-slate-700/60 flex items-center justify-center text-accent group-hover:text-white group-hover:border-accent/50 transition-colors shadow-sm flex-shrink-0">
+                <div className="w-8 h-8 rounded-xl bg-surface-elevated border border-border-hairline flex items-center justify-center text-accent group-hover:text-white group-hover:border-accent/50 transition-colors shadow-sm flex-shrink-0">
                   <ArrowLeft className="w-4 h-4" />
                 </div>
                 <div className="flex flex-col text-left min-w-0">
                   <span className="text-[10px] text-slate-400 font-medium uppercase tracking-wider leading-none">
-                    Curriculum
+                    {activeLessonData ? "Curriculum" : "Library"}
                   </span>
                   <span className="text-xs sm:text-sm font-bold text-white truncate max-w-[85px] xs:max-w-[150px] sm:max-w-[280px]">
-                    {activeLessonData.lesson.title}
+                    {activeLessonData?.lesson.title || selectedGeneratedLesson?.title}
                   </span>
                 </div>
               </button>
@@ -763,10 +763,10 @@ function Dashboard() {
       <button
         type="button"
         onClick={() => openTutor()}
-        className={`fixed z-40 flex items-center gap-2.5 px-3.5 sm:px-4 py-2.5 rounded-full bg-surface-elevated/95 border border-accent/40 text-white shadow-xl shadow-black/50 hover:border-accent hover:bg-surface-elevated hover:shadow-accent/20 focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none transition-all press-scale backdrop-blur-md min-h-[44px] ${
+        className={`fixed z-40 flex items-center gap-2.5 px-3.5 sm:px-4 py-2.5 rounded-full bg-surface-elevated/95 border border-accent/40 text-white shadow-xl shadow-black/50 hover:border-accent hover:bg-surface-elevated hover:shadow-accent/20 focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none transition-all press-scale backdrop-blur-md min-h-[44px] touch-target-44 ${
           isInsideLesson
             ? 'bottom-[max(1.25rem,env(safe-area-inset-bottom,1.25rem))] right-4 sm:bottom-6 sm:right-6'
-            : 'bottom-20 right-4 md:bottom-6 md:right-6'
+            : 'bottom-24 right-4 md:bottom-6 md:right-6'
         }`}
         aria-label="Open NetMentor AI Tutor"
       >
