@@ -52,7 +52,12 @@ export class GeminiAiProvider implements AiProviderClient {
     });
 
     const isJsonRequest = Boolean(
-      (request.systemPrompt && /STRICT JSON|MANDATORY JSON/i.test(request.systemPrompt)) ||
+      (request.systemPrompt &&
+        /STRICT JSON|MANDATORY JSON|JSON SCHEMA|STRUCTURED LESSON|STRUCTURED FLASHCARD|STRUCTURED QUIZ/i.test(
+          request.systemPrompt,
+        )) ||
+      (request.userPrompt &&
+        /JSON SCHEMA|pure valid JSON|valid JSON object/i.test(request.userPrompt)) ||
       (request as any).responseFormat === 'json'
     );
 
@@ -128,9 +133,17 @@ export class GeminiAiProvider implements AiProviderClient {
       });
     }
 
+    let cleanedText = textPart.trim();
+    if (isJsonRequest && cleanedText.startsWith('```')) {
+      const fenceMatch = cleanedText.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+      if (fenceMatch) {
+        cleanedText = fenceMatch[1].trim();
+      }
+    }
+
     const usageMetadata = data.usageMetadata;
     return {
-      text: textPart.trim(),
+      text: cleanedText,
       model: `gemini/${this.model}`,
       finishReason: candidate?.finishReason || 'stop',
       isSimulated: false,
