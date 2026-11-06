@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import type {
   TopologyNode,
   SocraticCheckpoint,
+  PacketHeader,
 } from '../../../types/protocol-simulation';
 import { Card, Badge } from '../../ui';
 import { useAiTutor } from '../../../context/AiTutorContext';
@@ -20,9 +21,11 @@ interface NodeTableInspectorProps {
   socraticCheckpoint?: SocraticCheckpoint;
   stepTitle: string;
   stepIndex: number;
+  scenarioTitle?: string;
+  packet?: PacketHeader;
 }
 
-type DeviceTableTab = 'socket' | 'arp' | 'mac' | 'routing';
+type DeviceTableTab = 'socket' | 'ospf' | 'arp' | 'mac' | 'routing';
 
 export const NodeTableInspector: React.FC<NodeTableInspectorProps> = ({
   nodes,
@@ -31,24 +34,87 @@ export const NodeTableInspector: React.FC<NodeTableInspectorProps> = ({
   socraticCheckpoint,
   stepTitle,
   stepIndex,
+  scenarioTitle,
+  packet,
 }) => {
+  const selectedNode = nodes.find((n) => n.id === selectedNodeId) || nodes[0];
+  const tableState = selectedNode?.tableState || {};
+
   const [activeTableTab, setActiveTableTab] = useState<DeviceTableTab>('socket');
   const [showHint, setShowHint] = useState<boolean>(false);
   const { openTutor } = useAiTutor();
 
-  const selectedNode = nodes.find((n) => n.id === selectedNodeId) || nodes[0];
-  const tableState = selectedNode?.tableState || {};
+  // Dynamically select the most relevant default tab when the selected device changes
+  useEffect(() => {
+    if (selectedNode.type === 'switch') {
+      setActiveTableTab('mac');
+    } else if (selectedNode.type === 'router') {
+      setActiveTableTab('ospf');
+    } else if (tableState.tcpState) {
+      setActiveTableTab('socket');
+    } else {
+      setActiveTableTab('arp');
+    }
+  }, [selectedNode.id, selectedNode.type]);
 
+  // Construct grounded Socratic prompt for the AI Tutor drawer
   const handleDiscussWithTutor = () => {
     if (!socraticCheckpoint) return;
+
+    const nodeStateSummary = nodes
+      .map((n) => {
+        const parts: string[] = [];
+        if (n.tableState.tcpState) parts.push(`TCP: ${n.tableState.tcpState}`);
+        if (n.tableState.ospfNeighbors?.length) {
+          parts.push(`OSPF: ${n.tableState.ospfNeighbors.map((o) => `${o.neighborId} (${o.state})`).join(', ')}`);
+        }
+        if (n.tableState.macTable?.length) {
+          parts.push(`MACs: ${n.tableState.macTable.map((m) => `${m.mac} on ${m.port}`).join(', ')}`);
+        }
+        if (n.tableState.arpCache?.length) {
+          parts.push(`ARP: ${n.tableState.arpCache.map((a) => `${a.ip}->${a.mac}`).join(', ')}`);
+        }
+        return `${n.name} [${parts.length > 0 ? parts.join('; ') : 'Default'}]`;
+      })
+      .join(' | ');
+
+    const packetSummary = packet
+      ? `In-Flight Packet: ${packet.L4.protocolType} (${packet.L3.srcIp} -> ${packet.L3.dstIp}) - ${packet.payloadDescription}`
+      : '';
+
+    const groundedPrompt = [
+      `I am analyzing ${scenarioTitle || 'the protocol simulation'} at Step ${stepIndex + 1}: "${stepTitle}".`,
+      packetSummary,
+      `Current Node Telemetry: ${nodeStateSummary}`,
+      `Socratic Checkpoint Question: "${socraticCheckpoint.question}"`,
+      `Pedagogical Hint: "${socraticCheckpoint.hint}"`,
+      `\nCan you guide me step-by-step through the networking logic behind this question?`,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+
     openTutor({
       mode: 'socratic_hint',
       lessonId: 'protocol-sim',
-      lessonTitle: `Protocol Explorer: ${stepTitle}`,
+      lessonTitle: scenarioTitle ? `Protocol Explorer: ${scenarioTitle}` : `Protocol Explorer: ${stepTitle}`,
       sectionId: `Step ${stepIndex + 1}`,
       exerciseId: `checkpoint-${stepIndex}`,
+      initialPrompt: groundedPrompt,
     });
   };
+
+  const tabsConfig = [
+    { id: 'socket', label: 'Socket State', count: tableState.tcpState ? 1 : 0 },
+    { id: 'ospf', label: 'OSPF Neighbors', count: tableState.ospfNeighbors?.length || 0 },
+    { id: 'arp', label: 'ARP Cache', count: tableState.arpCache?.length || 0 },
+    { id: 'mac', label: 'MAC Table', count: tableState.macTable?.length || 0 },
+    { id: 'routing', label: 'Routing Table', count: tableState.routingTable?.length || 0 },
+  ].filter((tab) => {
+    if (tab.id === 'ospf' && selectedNode.type !== 'router' && !tableState.ospfNeighbors?.length) return false;
+    if (tab.id === 'mac' && selectedNode.type !== 'switch' && !tableState.macTable?.length) return false;
+    if (tab.id === 'socket' && selectedNode.type === 'switch') return false;
+    return true;
+  });
 
   return (
     <div className="space-y-4">
@@ -87,12 +153,7 @@ export const NodeTableInspector: React.FC<NodeTableInspectorProps> = ({
 
         {/* Device Table Navigation Tabs */}
         <div className="flex items-center gap-2 border-b border-border-hairline pb-2 overflow-x-auto no-scrollbar">
-          {[
-            { id: 'socket', label: 'Socket State', count: tableState.tcpState ? 1 : 0 },
-            { id: 'arp', label: 'ARP Cache', count: tableState.arpCache?.length || 0 },
-            { id: 'mac', label: 'MAC Table', count: tableState.macTable?.length || 0 },
-            { id: 'routing', label: 'Routing Table', count: tableState.routingTable?.length || 0 },
-          ].map((tab) => {
+          {tabsConfig.map((tab) => {
             const isTabActive = activeTableTab === tab.id;
             return (
               <button
@@ -106,9 +167,11 @@ export const NodeTableInspector: React.FC<NodeTableInspectorProps> = ({
                 }`}
               >
                 <span>{tab.label}</span>
-                <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full ${
-                  isTabActive ? 'bg-accent/20 text-accent' : 'bg-surface text-slate-500'
-                }`}>
+                <span
+                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full ${
+                    isTabActive ? 'bg-accent/20 text-accent' : 'bg-surface text-slate-500'
+                  }`}
+                >
                   {tab.count}
                 </span>
               </button>
@@ -151,6 +214,57 @@ export const NodeTableInspector: React.FC<NodeTableInspectorProps> = ({
               <p className="text-[11px] text-slate-500">
                 Socket state machine transitions dynamically as packets (SYN, SYN-ACK, ACK, FIN) are dispatched and acknowledged across the wire.
               </p>
+            </div>
+          )}
+
+          {/* OSPF Neighbor Table */}
+          {activeTableTab === 'ospf' && (
+            <div className="space-y-2">
+              <span className="text-xs font-semibold text-slate-300 block mb-2">
+                OSPF Adjacency & Neighbor Table ({selectedNode.name})
+              </span>
+              {!tableState.ospfNeighbors || tableState.ospfNeighbors.length === 0 ? (
+                <p className="text-xs font-mono text-slate-500 text-center py-6">
+                  No active OSPF neighbor relationships recorded on this router.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs font-mono">
+                    <thead>
+                      <tr className="border-b border-border-hairline text-slate-500 text-[10px] uppercase">
+                        <th className="py-1.5 px-2">Neighbor RID</th>
+                        <th className="py-1.5 px-2">Pri</th>
+                        <th className="py-1.5 px-2">State</th>
+                        <th className="py-1.5 px-2">Neighbor IP</th>
+                        <th className="py-1.5 px-2">Interface</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border-hairline/60">
+                      {tableState.ospfNeighbors.map((entry, idx) => (
+                        <tr key={idx} className="hover:bg-surface/50 text-slate-200">
+                          <td className="py-2 px-2 text-amber-300 font-bold">{entry.neighborId}</td>
+                          <td className="py-2 px-2 text-slate-400">{entry.priority}</td>
+                          <td className="py-2 px-2">
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                entry.state.includes('FULL')
+                                  ? 'bg-status-converged/20 text-status-converged border border-status-converged/40'
+                                  : entry.state.includes('STALLED') || entry.state.includes('MISMATCH')
+                                  ? 'bg-status-alert/20 text-status-alert border border-status-alert/40'
+                                  : 'bg-accent/20 text-accent border border-accent/40'
+                              }`}
+                            >
+                              {entry.state}
+                            </span>
+                          </td>
+                          <td className="py-2 px-2 text-slate-300">{entry.address}</td>
+                          <td className="py-2 px-2 text-slate-400">{entry.interface}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
 
@@ -251,7 +365,9 @@ export const NodeTableInspector: React.FC<NodeTableInspectorProps> = ({
                       {tableState.routingTable.map((entry, idx) => (
                         <tr key={idx} className="hover:bg-surface/50 text-slate-200">
                           <td className="py-2 px-2 text-accent font-bold">{entry.protocol}</td>
-                          <td className="py-2 px-2 text-slate-200">{entry.network}/{entry.mask}</td>
+                          <td className="py-2 px-2 text-slate-200">
+                            {entry.network}/{entry.mask}
+                          </td>
                           <td className="py-2 px-2 text-slate-400">{entry.nextHop || 'Direct'}</td>
                           <td className="py-2 px-2 text-slate-400">{entry.interface}</td>
                         </tr>

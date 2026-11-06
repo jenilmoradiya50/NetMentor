@@ -27,6 +27,7 @@ export interface OpenTutorOptions {
   sections?: Array<{ id: string; title: string }>;
   sectionId?: string;
   exerciseId?: string;
+  initialPrompt?: string;
 }
 
 export interface AiTutorContextType {
@@ -35,12 +36,14 @@ export interface AiTutorContextType {
   lessonContext: LessonContextData | null;
   activeSectionId?: string;
   activeExerciseId?: string;
+  initialPrompt?: string;
   openTutor: (options?: OpenTutorOptions) => void;
   closeTutor: () => void;
   setLessonContext: (context: LessonContextData | null) => void;
   clearLessonContext: () => void;
   setMode: (mode: AiTutoringMode) => void;
   setActiveSectionId: (sectionId?: string) => void;
+  setInitialPrompt: (prompt?: string) => void;
 }
 
 const AiTutorContext = createContext<AiTutorContextType | undefined>(undefined);
@@ -51,6 +54,7 @@ export const AiTutorProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [lessonContext, setLessonContextState] = useState<LessonContextData | null>(null);
   const [activeSectionId, setActiveSectionId] = useState<string | undefined>(undefined);
   const [activeExerciseId, setActiveExerciseId] = useState<string | undefined>(undefined);
+  const [initialPrompt, setInitialPrompt] = useState<string | undefined>(undefined);
 
   const setLessonContext = useCallback((context: LessonContextData | null) => {
     setLessonContextState(context);
@@ -97,6 +101,9 @@ export const AiTutorProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if (options?.exerciseId !== undefined) {
         setActiveExerciseId(options.exerciseId);
       }
+      if (options?.initialPrompt !== undefined) {
+        setInitialPrompt(options.initialPrompt);
+      }
 
       setIsOpen(true);
     },
@@ -114,12 +121,14 @@ export const AiTutorProvider: React.FC<{ children: React.ReactNode }> = ({ child
       lessonContext,
       activeSectionId,
       activeExerciseId,
+      initialPrompt,
       openTutor,
       closeTutor,
       setLessonContext,
       clearLessonContext,
       setMode,
       setActiveSectionId,
+      setInitialPrompt,
     }),
     [
       isOpen,
@@ -127,6 +136,7 @@ export const AiTutorProvider: React.FC<{ children: React.ReactNode }> = ({ child
       lessonContext,
       activeSectionId,
       activeExerciseId,
+      initialPrompt,
       openTutor,
       closeTutor,
       setLessonContext,

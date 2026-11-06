@@ -87,6 +87,8 @@ function Dashboard() {
     lessonContext,
     activeSectionId,
     activeExerciseId,
+    initialPrompt,
+    setInitialPrompt,
     openTutor,
     closeTutor,
   } = useAiTutor();
@@ -825,6 +827,8 @@ function Dashboard() {
         activeSectionId={activeSectionId}
         activeExerciseId={activeExerciseId}
         initialMode={aiTutorMode}
+        initialPrompt={initialPrompt}
+        onClearInitialPrompt={() => setInitialPrompt(undefined)}
         onCreateLesson={(topic, context, convId) => {
           setCreateLessonParams({
             initialTopic: topic,

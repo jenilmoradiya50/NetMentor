@@ -58,6 +58,8 @@ export interface AiTutorDrawerProps {
   activeSectionId?: string;
   activeExerciseId?: string;
   initialMode?: AiTutoringMode;
+  initialPrompt?: string;
+  onClearInitialPrompt?: () => void;
   onCreateLesson?: (topic: string, context?: string, conversationId?: string) => void;
   onGenerateFlashcards?: (lessonId: string) => void;
   onGenerateStandaloneFlashcards?: (topic: string) => void;
@@ -72,6 +74,8 @@ export const AiTutorDrawer: React.FC<AiTutorDrawerProps> = ({
   activeSectionId,
   activeExerciseId,
   initialMode,
+  initialPrompt,
+  onClearInitialPrompt,
   onCreateLesson,
   onGenerateFlashcards,
   onGenerateStandaloneFlashcards,
@@ -216,6 +220,18 @@ export const AiTutorDrawer: React.FC<AiTutorDrawerProps> = ({
       previousActiveElementRef.current = null;
     }
   }, [isOpen, showHistory]);
+
+  // Pre-populate input if initialPrompt is supplied (e.g. from Protocol Explorer Socratic Checkpoint)
+  useEffect(() => {
+    if (isOpen && initialPrompt) {
+      setInputValue(initialPrompt);
+      onClearInitialPrompt?.();
+      const timer = setTimeout(() => {
+        inputRef.current?.focus();
+      }, 120);
+      return () => clearTimeout(timer);
+    }
+  }, [isOpen, initialPrompt, onClearInitialPrompt]);
 
   // Close drawer or close history view on Escape
   useEffect(() => {

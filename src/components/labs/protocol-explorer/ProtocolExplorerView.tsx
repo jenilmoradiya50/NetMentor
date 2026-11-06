@@ -80,7 +80,10 @@ export const ProtocolExplorerView: React.FC = () => {
                 const nextId = e.target.value;
                 setSelectedScenarioId(nextId);
                 const nextScenario = PROTOCOL_SIMULATION_CATALOG.find((s) => s.metadata.id === nextId);
-                if (nextScenario) setScenario(nextScenario);
+                if (nextScenario) {
+                  setScenario(nextScenario);
+                  setSelectedNodeId(nextScenario.topology.nodes[0]?.id || 'host-client');
+                }
               }}
               className="px-3 py-2 rounded-xl bg-surface border border-border-hairline text-xs font-semibold text-white focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent min-h-[40px]"
             >
@@ -154,6 +157,8 @@ export const ProtocolExplorerView: React.FC = () => {
           socraticCheckpoint={currentStep.socraticCheckpoint}
           stepTitle={currentStep.title}
           stepIndex={currentStepIndex}
+          scenarioTitle={scenario.metadata.title}
+          packet={currentStep.transmission.packet}
         />
       </div>
     </div>

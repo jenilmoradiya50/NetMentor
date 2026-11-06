@@ -9,6 +9,7 @@ import {
   Laptop,
   Server,
   Network,
+  Compass,
   ArrowRight,
   Radio,
   Activity,
@@ -53,6 +54,9 @@ export const TopologyVisualizer: React.FC<TopologyVisualizerProps> = ({
   const getNodeIcon = (node: TopologyNode) => {
     if (node.type === 'switch') {
       return <Network className="w-5 h-5 text-accent" />;
+    }
+    if (node.type === 'router') {
+      return <Compass className="w-5 h-5 text-emerald-400" />;
     }
     if (node.id.toLowerCase().includes('server') || node.name.toLowerCase().includes('server')) {
       return <Server className="w-5 h-5 text-emerald-400" />;
@@ -106,8 +110,16 @@ export const TopologyVisualizer: React.FC<TopologyVisualizerProps> = ({
         {/* Subtle grid background */}
         <div className="absolute inset-0 bg-[radial-gradient(#1f232b_1px,transparent_1px)] [background-size:16px_16px] opacity-40 pointer-events-none" />
 
-        {/* Nodes Cluster: 3-Node Topology Stage (Host -> Switch -> Server) */}
-        <div className="relative z-10 grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+        {/* Nodes Cluster: Dynamic Topology Stage (2-node Point-to-Point, 3-node, or 4-node Switched LAN) */}
+        <div
+          className={`relative z-10 grid gap-4 items-center ${
+            topology.nodes.length <= 2
+              ? 'grid-cols-1 sm:grid-cols-2'
+              : topology.nodes.length === 3
+              ? 'grid-cols-1 md:grid-cols-3'
+              : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4'
+          }`}
+        >
           {topology.nodes.map((node) => {
             const isTransmitting = node.id === fromNodeId;
             const isReceiving = node.id === toNodeId;
@@ -168,11 +180,42 @@ export const TopologyVisualizer: React.FC<TopologyVisualizerProps> = ({
                   </p>
                 </div>
 
-                {/* Socket State Footer */}
-                {node.tableState?.tcpState && (
+                {/* Dynamic Protocol State Footer */}
+                {node.tableState?.tcpState ? (
                   <div className="mt-3 pt-2.5 border-t border-border-hairline flex items-center justify-between">
                     <span className="text-[10px] font-mono text-slate-500 uppercase">TCP State</span>
                     {getSocketStateBadge(node.tableState.tcpState)}
+                  </div>
+                ) : node.tableState?.ospfNeighbors?.[0] ? (
+                  <div className="mt-3 pt-2.5 border-t border-border-hairline flex items-center justify-between">
+                    <span className="text-[10px] font-mono text-slate-500 uppercase">OSPF State</span>
+                    <Badge
+                      variant={
+                        node.tableState.ospfNeighbors[0].state.includes('FULL')
+                          ? 'green'
+                          : node.tableState.ospfNeighbors[0].state.includes('STALLED') ||
+                            node.tableState.ospfNeighbors[0].state.includes('MISMATCH')
+                          ? 'red'
+                          : 'amber'
+                      }
+                      size="sm"
+                    >
+                      {node.tableState.ospfNeighbors[0].state}
+                    </Badge>
+                  </div>
+                ) : node.type === 'switch' ? (
+                  <div className="mt-3 pt-2.5 border-t border-border-hairline flex items-center justify-between">
+                    <span className="text-[10px] font-mono text-slate-500 uppercase">CAM Table</span>
+                    <Badge variant="blue" size="sm">
+                      {node.tableState?.macTable?.length || 0} Learned
+                    </Badge>
+                  </div>
+                ) : (
+                  <div className="mt-3 pt-2.5 border-t border-border-hairline flex items-center justify-between">
+                    <span className="text-[10px] font-mono text-slate-500 uppercase">ARP Entries</span>
+                    <Badge variant="slate" size="sm">
+                      {node.tableState?.arpCache?.length || 0} Cached
+                    </Badge>
                   </div>
                 )}
 
