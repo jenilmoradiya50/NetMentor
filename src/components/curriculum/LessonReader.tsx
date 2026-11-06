@@ -8,6 +8,7 @@ import { PacketWalkVisualizer } from './visualizers/PacketWalkVisualizer.js';
 import { SubnetVisualizer } from './visualizers/SubnetVisualizer.js';
 import { OspfStateMachineVisualizer } from './visualizers/OspfStateMachineVisualizer.js';
 import { ActiveLearningSection } from './ActiveLearningSection.js';
+import { ProtocolLabCallout, getMatchingSimulationScenarioId } from './ProtocolLabCallout.js';
 import { useAiTutor } from '../../context/AiTutorContext.js';
 import { Card } from '../ui/Card.js';
 import { Button } from '../ui/Button.js';
@@ -41,7 +42,7 @@ interface LessonReaderProps {
   ) => Promise<void>;
   onSaveExerciseAttempt?: (attempt: ExerciseAttemptRecord) => Promise<void> | void;
   onNavigateToFlashcards?: (deckId: string) => void;
-  onNavigateToLabs?: (labId: string) => void;
+  onNavigateToLabs?: (labOrScenarioId?: string) => void;
 }
 
 export const LessonReader: React.FC<LessonReaderProps> = ({
@@ -62,6 +63,8 @@ export const LessonReader: React.FC<LessonReaderProps> = ({
     if (!initialExerciseAttempts) return false;
     return Object.values(initialExerciseAttempts).some((a) => a.status === 'correct');
   });
+
+  const matchingScenarioId = getMatchingSimulationScenarioId(lesson);
 
   // Connect to Global AI Tutor context
   const { openTutor, setLessonContext, clearLessonContext } = useAiTutor();
@@ -212,6 +215,16 @@ export const LessonReader: React.FC<LessonReaderProps> = ({
           {lesson.interactiveWidget.type === 'packet_walk' && <PacketWalkVisualizer />}
           {lesson.interactiveWidget.type === 'subnet_calculator' && <SubnetVisualizer />}
           {lesson.interactiveWidget.type === 'ospf_state_machine' && <OspfStateMachineVisualizer />}
+        </section>
+      )}
+
+      {/* Contextual Interactive Protocol Simulation Callout */}
+      {matchingScenarioId && (
+        <section aria-label="Interactive Protocol Simulation Lab">
+          <ProtocolLabCallout
+            scenarioId={matchingScenarioId}
+            onLaunchLab={(scenarioId) => onNavigateToLabs?.(scenarioId)}
+          />
         </section>
       )}
 

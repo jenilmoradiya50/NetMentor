@@ -129,6 +129,12 @@ function Dashboard() {
     }
     return null;
   });
+  const [targetLabScenarioId, setTargetLabScenarioId] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      return new URLSearchParams(window.location.search).get('scenario');
+    }
+    return null;
+  });
   const [activeAttemptData, setActiveAttemptData] = useState<GradedQuizAttemptResponse | null>(null);
   const [selectedGeneratedLesson, setSelectedGeneratedLesson] = useState<GeneratedLessonDetail | null>(null);
   const [isLoadingGenLesson, setIsLoadingGenLesson] = useState(false);
@@ -211,6 +217,8 @@ function Dashboard() {
         setActiveQuizId(qId);
         const aId = params.get('attemptId');
         setActiveAttemptId(aId);
+        const scenario = params.get('scenario');
+        setTargetLabScenarioId(scenario);
       }
     };
 
@@ -312,6 +320,9 @@ function Dashboard() {
     setStudyingDeckId(null);
     setActiveQuizId(null);
     setActiveAttemptId(null);
+    if (newTab !== 'labs') {
+      setTargetLabScenarioId(null);
+    }
     if (typeof window !== 'undefined') {
       const url = new URL(window.location.href);
       url.searchParams.set('tab', newTab);
@@ -320,6 +331,35 @@ function Dashboard() {
       url.searchParams.delete('deckId');
       url.searchParams.delete('quizId');
       url.searchParams.delete('attemptId');
+      if (newTab !== 'labs') {
+        url.searchParams.delete('scenario');
+      }
+      window.history.pushState({}, '', url.toString());
+    }
+  };
+
+  const handleNavigateToLabs = (scenarioOrLabId?: string) => {
+    if (scenarioOrLabId) {
+      setTargetLabScenarioId(scenarioOrLabId);
+    }
+    setMainTab('labs');
+    setActiveLessonId(null);
+    setSelectedGeneratedLessonId(null);
+    setSelectedGeneratedLesson(null);
+    setStudyingDeckId(null);
+    setActiveQuizId(null);
+    setActiveAttemptId(null);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', 'labs');
+      url.searchParams.delete('lesson');
+      url.searchParams.delete('genLesson');
+      url.searchParams.delete('deckId');
+      url.searchParams.delete('quizId');
+      url.searchParams.delete('attemptId');
+      if (scenarioOrLabId) {
+        url.searchParams.set('scenario', scenarioOrLabId);
+      }
       window.history.pushState({}, '', url.toString());
     }
   };
@@ -662,7 +702,7 @@ function Dashboard() {
               />
             )
           ) : mainTab === 'labs' ? (
-            <PacketTracerLabsView />
+            <PacketTracerLabsView targetScenarioId={targetLabScenarioId} />
           ) : mainTab === 'library' ? (
             selectedGeneratedLesson ? (
               <GeneratedLessonReader
@@ -707,7 +747,7 @@ function Dashboard() {
               onSelectLesson={handleSelectLesson}
               onBackToCurriculum={handleBackToCurriculum}
               onNavigateToFlashcards={() => handleTabChange('flashcards')}
-              onNavigateToLabs={() => handleTabChange('labs')}
+              onNavigateToLabs={handleNavigateToLabs}
             />
           )}
         </Suspense>

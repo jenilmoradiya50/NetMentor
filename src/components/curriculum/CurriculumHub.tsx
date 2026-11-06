@@ -30,7 +30,7 @@ const LessonReader = React.lazy(() =>
 
 interface CurriculumHubProps {
   onNavigateToFlashcards?: (deckId: string) => void;
-  onNavigateToLabs?: (labId: string) => void;
+  onNavigateToLabs?: (labOrScenarioId?: string) => void;
   activeLessonId?: string | null;
   onSelectLesson?: (lessonId: string) => void;
   onBackToCurriculum?: () => void;

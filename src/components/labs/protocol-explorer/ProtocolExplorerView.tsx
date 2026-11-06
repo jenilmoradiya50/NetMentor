@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useProtocolSimulation } from '../../../hooks/useProtocolSimulation';
 import { PROTOCOL_SIMULATION_CATALOG, TCP_HANDSHAKE_SCENARIO } from '../../../data/simulations';
 import { TopologyVisualizer } from './TopologyVisualizer';
@@ -8,15 +8,28 @@ import { NodeTableInspector } from './NodeTableInspector';
 import { Card, Badge } from '../../ui';
 import { Network, Info } from 'lucide-react';
 
-export const ProtocolExplorerView: React.FC = () => {
+export interface ProtocolExplorerViewProps {
+  initialScenarioId?: string | null;
+}
+
+export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
+  initialScenarioId,
+}) => {
+  const initialScenario =
+    (initialScenarioId &&
+      PROTOCOL_SIMULATION_CATALOG.find((s) => s.metadata.id === initialScenarioId)) ||
+    TCP_HANDSHAKE_SCENARIO;
+
   const [selectedScenarioId, setSelectedScenarioId] = useState<string>(
-    TCP_HANDSHAKE_SCENARIO.metadata.id
+    initialScenario.metadata.id
   );
-  const [selectedNodeId, setSelectedNodeId] = useState<string>('host-client');
+  const [selectedNodeId, setSelectedNodeId] = useState<string>(
+    initialScenario.topology.nodes[0]?.id || 'host-client'
+  );
 
   const activeScenario =
     PROTOCOL_SIMULATION_CATALOG.find((s) => s.metadata.id === selectedScenarioId) ||
-    TCP_HANDSHAKE_SCENARIO;
+    initialScenario;
 
   const {
     scenario,
@@ -41,6 +54,18 @@ export const ProtocolExplorerView: React.FC = () => {
     setInspectedLayer,
     setScenario,
   } = useProtocolSimulation(activeScenario);
+
+  // Synchronize scenario state when initialScenarioId prop changes from parent navigation
+  useEffect(() => {
+    if (initialScenarioId) {
+      const match = PROTOCOL_SIMULATION_CATALOG.find((s) => s.metadata.id === initialScenarioId);
+      if (match && match.metadata.id !== selectedScenarioId) {
+        setSelectedScenarioId(match.metadata.id);
+        setScenario(match);
+        setSelectedNodeId(match.topology.nodes[0]?.id || 'host-client');
+      }
+    }
+  }, [initialScenarioId, selectedScenarioId, setScenario]);
 
   if (!currentStep) return null;
 
@@ -83,6 +108,13 @@ export const ProtocolExplorerView: React.FC = () => {
                 if (nextScenario) {
                   setScenario(nextScenario);
                   setSelectedNodeId(nextScenario.topology.nodes[0]?.id || 'host-client');
+                  if (typeof window !== 'undefined') {
+                    const url = new URL(window.location.href);
+                    if (url.searchParams.get('tab') === 'labs') {
+                      url.searchParams.set('scenario', nextId);
+                      window.history.replaceState({}, '', url.toString());
+                    }
+                  }
                 }
               }}
               className="px-3 py-2 rounded-xl bg-surface border border-border-hairline text-xs font-semibold text-white focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent min-h-[40px]"

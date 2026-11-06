@@ -17,13 +17,26 @@ import {
 
 export type LabsViewTab = 'explorer' | 'pkt-catalog';
 
-export const PacketTracerLabsView: React.FC = () => {
+export interface PacketTracerLabsViewProps {
+  targetScenarioId?: string | null;
+}
+
+export const PacketTracerLabsView: React.FC<PacketTracerLabsViewProps> = ({
+  targetScenarioId,
+}) => {
   const [activeTab, setActiveTab] = useState<LabsViewTab>('explorer');
   const [labs, setLabs] = useState<CatalogLab[]>(JEREMY_PACKET_TRACER_LABS);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [softwareRequirement, setSoftwareRequirement] = useState('');
   const [browserNotice, setBrowserNotice] = useState('');
+
+  // Switch to explorer tab when target scenario is requested via deep-linking
+  useEffect(() => {
+    if (targetScenarioId) {
+      setActiveTab('explorer');
+    }
+  }, [targetScenarioId]);
 
   useEffect(() => {
     async function loadLabs() {
@@ -88,7 +101,7 @@ export const PacketTracerLabsView: React.FC = () => {
 
       {/* Main Tab Content */}
       {activeTab === 'explorer' ? (
-        <ProtocolExplorerView />
+        <ProtocolExplorerView initialScenarioId={targetScenarioId} />
       ) : (
         <div className="space-y-6">
           {/* Header Banner */}
