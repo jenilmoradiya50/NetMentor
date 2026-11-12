@@ -503,44 +503,6 @@ function Dashboard() {
     },
   ];
 
-  const mobileNavOptions: Array<{
-    id: TabId;
-    label: string;
-    icon: React.ReactNode;
-    isActive: boolean;
-  }> = [
-    {
-      id: 'dashboard',
-      label: 'Home',
-      icon: <Activity className="w-5 h-5" />,
-      isActive: mainTab === 'dashboard',
-    },
-    {
-      id: 'curriculum',
-      label: 'Learn',
-      icon: <Compass className="w-5 h-5" />,
-      isActive: mainTab === 'curriculum',
-    },
-    {
-      id: 'labs',
-      label: 'Labs',
-      icon: <Network className="w-5 h-5" />,
-      isActive: mainTab === 'labs',
-    },
-    {
-      id: 'flashcards',
-      label: 'Practice',
-      icon: <Layers className="w-5 h-5" />,
-      isActive: mainTab === 'flashcards' || mainTab === 'quizzes',
-    },
-    {
-      id: 'library',
-      label: 'Library',
-      icon: <BookOpen className="w-5 h-5" />,
-      isActive: mainTab === 'library',
-    },
-  ];
-
   return (
     <div className="min-h-screen bg-canvas text-slate-100 flex flex-col font-sans selection:bg-accent/30 selection:text-white">
       {/* Demo Mode Alert Banner */}
@@ -563,7 +525,7 @@ function Dashboard() {
       )}
 
       {/* Floating Glass Navigation Header */}
-      <header className="glass-nav sticky top-0 z-30 safe-top w-full border-b border-border-hairline">
+      <header className="glass-nav sticky top-0 z-30 safe-top w-full border-b border-border-hairline bg-[#090A0C]/95 backdrop-blur-md">
         <div className="max-w-6xl mx-auto px-4 py-2.5 flex items-center justify-between gap-3">
           {/* Brand Identity / Sticky Lesson Back Navigation */}
           {isInsideLesson && (activeLessonData || selectedGeneratedLesson) ? (
@@ -588,34 +550,49 @@ function Dashboard() {
               </button>
             </div>
           ) : (
-            <button
-              type="button"
-              onClick={() => handleTabChange('dashboard')}
-              className="flex items-center gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-xl press-scale-subtle"
-            >
-              <div className="h-9 w-9 rounded-xl bg-surface-elevated flex items-center justify-center shadow-md border border-border-hairline overflow-hidden p-0.5 flex-shrink-0">
-                <img src="/icon.svg" alt="NetMentor" className="w-full h-full object-contain" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-base sm:text-lg font-bold tracking-tight text-white heading-title">
-                    NetMentor
-                  </span>
-                  {isDemoMode ? (
-                    <Badge variant="amber" size="sm" className="hidden sm:inline-flex">
-                      Demo Mode
-                    </Badge>
-                  ) : (
-                    <Badge variant="blue" size="sm" className="hidden sm:inline-flex">
-                      Protected
-                    </Badge>
-                  )}
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+              <button
+                type="button"
+                onClick={() => handleTabChange('dashboard')}
+                className="flex items-center gap-2.5 sm:gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-xl press-scale-subtle"
+              >
+                <div className="h-9 w-9 rounded-xl bg-surface-elevated flex items-center justify-center shadow-md border border-border-hairline overflow-hidden p-0.5 flex-shrink-0">
+                  <img src="/icon.svg" alt="NetMentor" className="w-full h-full object-contain" />
                 </div>
-                <p className="text-[11px] text-slate-400 hidden sm:block">
-                  Interactive Networking Engineering &amp; CCNA / CCNP Mastery
-                </p>
-              </div>
-            </button>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-base sm:text-lg font-bold tracking-tight text-white heading-title">
+                      NetMentor
+                    </span>
+                    {isDemoMode ? (
+                      <Badge variant="amber" size="sm" className="hidden sm:inline-flex">
+                        Demo Mode
+                      </Badge>
+                    ) : (
+                      <Badge variant="blue" size="sm" className="hidden sm:inline-flex">
+                        Protected
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-400 hidden sm:block">
+                    Interactive Networking Engineering &amp; CCNA / CCNP Mastery
+                  </p>
+                </div>
+              </button>
+
+              {mainTab !== 'dashboard' && (
+                <button
+                  type="button"
+                  onClick={() => handleTabChange('dashboard')}
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-300 hover:text-white bg-surface-elevated/90 hover:bg-surface-elevated border border-border-hairline hover:border-accent/40 rounded-lg transition-colors press-scale touch-target-44 min-h-[36px]"
+                  title="Return to Command Center Dashboard"
+                  aria-label="Return to Command Center Dashboard"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5 text-accent" />
+                  <span className="font-semibold text-[11px] font-mono">Dashboard</span>
+                </button>
+              )}
+            </div>
           )}
 
           {/* Desktop Right Controls (AI Tutor, Database status, Session info & Logout) */}
@@ -720,11 +697,7 @@ function Dashboard() {
       </nav>
 
       {/* Main Content Area */}
-      <main
-        className={`flex-1 max-w-6xl w-full mx-auto px-4 py-6 sm:py-8 ${
-          isInsideLesson ? 'pb-8 md:pb-12' : 'pb-24 md:pb-8'
-        }`}
-      >
+      <main className="flex-1 max-w-6xl w-full mx-auto px-4 py-5 sm:py-7 pb-8 md:pb-12">
         <Suspense fallback={<ViewLoadingFallback />}>
           {mainTab === 'dashboard' ? (
             <CommandCenterDashboard
@@ -818,40 +791,7 @@ function Dashboard() {
         </Suspense>
       </main>
 
-      {/* Mobile Bottom Navigation Dock */}
-      {!isInsideLesson && (
-        <nav
-          aria-label="Mobile Navigation"
-          className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-[#111317]/95 backdrop-blur-md border-t border-[#232730] pb-[env(safe-area-inset-bottom)] px-2 pt-1 flex items-center justify-around shadow-2xl safe-bottom"
-        >
-          {mobileNavOptions.map((opt) => {
-            return (
-              <button
-                key={opt.id}
-                type="button"
-                onClick={() => handleTabChange(opt.id)}
-                className={`flex-1 flex flex-col items-center justify-center py-2 px-1 relative transition-colors select-none touch-target-44 min-h-[48px] ${
-                  opt.isActive
-                    ? 'text-[#F59E0B]'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                {opt.isActive && (
-                  <span className="absolute top-0 inset-x-4 h-[2px] bg-[#F59E0B] rounded-full shadow-[0_0_8px_rgba(245,158,11,0.6)]" />
-                )}
-                <span className="mb-1">{opt.icon}</span>
-                <span
-                  className={`whitespace-nowrap text-[10px] tracking-tight leading-none ${
-                    opt.isActive ? 'text-white font-semibold' : 'text-slate-400 font-medium'
-                  }`}
-                >
-                  {opt.label}
-                </span>
-              </button>
-            );
-          })}
-        </nav>
-      )}
+
 
       {/* Mobile Account Details Bottom Sheet */}
       <Sheet
@@ -906,20 +846,7 @@ function Dashboard() {
         </div>
       </Sheet>
 
-      {/* Floating Ask AI Tutor Entry Button (Desktop only; hidden on mobile) */}
-      <button
-        type="button"
-        onClick={() => openTutor()}
-        className="fixed z-40 hidden md:inline-flex items-center gap-2.5 px-4 py-2.5 rounded-full bg-surface-elevated/95 border border-accent/40 text-white shadow-xl shadow-black/50 hover:border-accent hover:bg-surface-elevated hover:shadow-accent/20 focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none transition-all press-scale backdrop-blur-md min-h-[44px] touch-target-44 bottom-6 right-6"
-        aria-label="Open NetMentor AI Tutor"
-      >
-        <div className="w-2 h-2 rounded-full bg-accent animate-pulse" />
-        <Bot className="w-4 h-4 text-accent" />
-        <span className="text-xs font-bold tracking-tight">Ask AI Tutor</span>
-        <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-accent/20 text-accent border border-accent/30">
-          AI Assistant
-        </span>
-      </button>
+
 
       {/* Global AI Tutor Slide-Over Drawer */}
       <AiTutorDrawer
