@@ -4,6 +4,7 @@ import {
   ARP_MAC_LEARNING_SCENARIO,
   OSPF_ADJACENCY_SCENARIO,
   VLAN_TRUNKING_ROAS_SCENARIO,
+  BGP_BEST_PATH_SCENARIO,
 } from '../src/data/simulations/index.ts';
 import {
   computeAccumulatedTopology,
@@ -46,8 +47,8 @@ async function runProtocolSimulationTests() {
   console.log('1. Testing Scenario Catalog Completeness & Metadata:');
 
   assert(
-    PROTOCOL_SIMULATION_CATALOG.length === 4,
-    `Expected exactly 4 simulation scenarios in catalog, found ${PROTOCOL_SIMULATION_CATALOG.length}`
+    PROTOCOL_SIMULATION_CATALOG.length === 5,
+    `Expected exactly 5 simulation scenarios in catalog, found ${PROTOCOL_SIMULATION_CATALOG.length}`
   );
 
   const scenarioIds = PROTOCOL_SIMULATION_CATALOG.map((s) => s.metadata.id);
@@ -66,6 +67,10 @@ async function runProtocolSimulationTests() {
   assert(
     scenarioIds.includes('vlan-trunking-roas'),
     'Catalog includes 802.1Q VLAN Trunking & Router-on-a-Stick scenario'
+  );
+  assert(
+    scenarioIds.includes('bgp-best-path-selection'),
+    'Catalog includes CCNP ENCOR BGP Peering & Best-Path Selection scenario'
   );
 
   // Validate metadata fields for every scenario
@@ -384,7 +389,60 @@ async function runProtocolSimulationTests() {
     assert(Boolean(pcEngArp && pcEngArp.mac === '00:1A:2B:3C:4D:R2'), 'PC-Eng records default gateway R1 Gi0/0.20 in its ARP cache');
   }
 
-  // E. Unit Verification of applySingleMutation Helper
+  // E. CCNP ENCOR BGP eBGP Peering Session & Best-Path Selection Accumulation
+  {
+    console.log('   Testing BGP eBGP Session Establishment & Best-Path Tie-Breaker Accumulation:');
+    const bgpSteps = BGP_BEST_PATH_SCENARIO.steps;
+    const baseNodes = BGP_BEST_PATH_SCENARIO.topology.nodes;
+
+    // Step 0: R1-Edge sends TCP SYN to ISP-A:179 and transitions to OPENSENT
+    const topoAt0 = computeAccumulatedTopology(baseNodes, bgpSteps, 0);
+    const r1At0 = topoAt0.find((n) => n.id === 'r1-edge');
+    assert(r1At0?.tableState.tcpState === 'OPENSENT', 'R1-Edge transitions to OPENSENT upon dispatching TCP/179 SYN');
+    const step0Packet = bgpSteps[0].transmission.packet;
+    assert(step0Packet.L4.protocolType === 'TCP' && step0Packet.L4.dstPort === 179, 'Step 0 packet targets TCP port 179');
+    assert(step0Packet.L3.ttl === 1, 'Step 0 packet enforces eBGP single-hop TTL=1');
+
+    // Step 1: ISP-A replies with BGP OPEN; both R1-Edge and ISP-A transition to OPENCONFIRM
+    const topoAt1 = computeAccumulatedTopology(baseNodes, bgpSteps, 1);
+    const r1At1 = topoAt1.find((n) => n.id === 'r1-edge');
+    const ispAAt1 = topoAt1.find((n) => n.id === 'isp-a');
+    assert(r1At1?.tableState.tcpState === 'OPENCONFIRM', 'R1-Edge transitions to OPENCONFIRM upon receiving valid BGP OPEN');
+    assert(ispAAt1?.tableState.tcpState === 'OPENCONFIRM', 'ISP-A transitions to OPENCONFIRM');
+
+    // Step 2: KEEPALIVE exchange brings peers to ESTABLISHED state
+    const topoAt2 = computeAccumulatedTopology(baseNodes, bgpSteps, 2);
+    const r1At2 = topoAt2.find((n) => n.id === 'r1-edge');
+    const ispAAt2 = topoAt2.find((n) => n.id === 'isp-a');
+    assert(r1At2?.tableState.tcpState === 'ESTABLISHED', 'R1-Edge reaches ESTABLISHED peering state');
+    assert(ispAAt2?.tableState.tcpState === 'ESTABLISHED', 'ISP-A reaches ESTABLISHED peering state');
+    assert(bgpSteps[2].transmission.packet.payloadDescription.includes('KEEPALIVE'), 'Step 2 payload confirms 19-byte BGP KEEPALIVE');
+
+    // Step 3: ISP-A advertises 203.0.113.0/24 with AS-Path [65100, 65900]
+    const topoAt3 = computeAccumulatedTopology(baseNodes, bgpSteps, 3);
+    const r1At3 = topoAt3.find((n) => n.id === 'r1-edge');
+    const routeAt3 = r1At3?.tableState.routingTable?.find((r) => r.network === '203.0.113.0');
+    assert(Boolean(routeAt3), 'R1-Edge installs route for 203.0.113.0/24 from ISP-A into routing table');
+    assert(routeAt3?.nextHop === '172.16.1.2', 'Initial BGP route next-hop is ISP-A (172.16.1.2)');
+    assert(routeAt3?.protocol === 'B', 'BGP route has protocol flag B');
+    assert(routeAt3?.adminDistance === 20, 'eBGP route has Administrative Distance 20');
+
+    // Step 4: ISP-B advertises competing prefix 203.0.113.0/24 with shorter AS-Path [65200]
+    const step4Packet = bgpSteps[4].transmission.packet;
+    assert(step4Packet.payloadDescription.includes('65200'), 'Step 4 packet advertises shorter AS-Path [65200] from ISP-B');
+    assert(step4Packet.payloadDescription.includes('MED: 200'), 'Step 4 packet indicates higher MED of 200');
+
+    // Step 5: BGP Best-Path algorithm selects ISP-B due to shorter AS-Path (1 hop vs 2 hops), ignoring higher MED
+    const topoAtFinal = computeAccumulatedTopology(baseNodes, bgpSteps, bgpSteps.length - 1);
+    const r1AtFinal = topoAtFinal.find((n) => n.id === 'r1-edge');
+    const routeAtFinal = r1AtFinal?.tableState.routingTable?.find((r) => r.network === '203.0.113.0');
+    assert(Boolean(routeAtFinal), 'R1-Edge maintains active route for 203.0.113.0/24');
+    assert(routeAtFinal?.nextHop === '172.16.2.2', 'Best-path selection converges active next-hop to ISP-B (172.16.2.2)');
+    assert(routeAtFinal?.interface === 'Gi0/2', 'Active egress interface switches to Gi0/2 toward ISP-B');
+    assert(routeAtFinal?.metric === 200, 'Route reflects ISP-B metric (200), proving shorter AS-Path beat lower MED (100)');
+  }
+
+  // F. Unit Verification of applySingleMutation Helper
   {
     console.log('   Testing applySingleMutation Primitive Resiliency:');
     const dummyNode: TopologyNode = {
@@ -495,7 +553,7 @@ async function runProtocolSimulationTests() {
     }
   }
 
-  assert(totalCheckpoints >= 4, `Verified ${totalCheckpoints} total Socratic checkpoints across all simulation scenarios`);
+  assert(totalCheckpoints >= 5, `Verified ${totalCheckpoints} total Socratic checkpoints across all simulation scenarios`);
 
   console.log('\n=============================================================');
   console.log(`✓ ALL ${passed} PROTOCOL SIMULATION CHECKS PASSED CLEANLY! (0 failures)`);

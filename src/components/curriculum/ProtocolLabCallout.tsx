@@ -18,6 +18,7 @@ export function getMatchingSimulationScenarioId(lesson: DetailedLesson): string 
   // 1. Explicit ID mapping
   if (lesson.id === 'lesson-ospf-neighbor-states') return 'ospf-adjacency-mtu';
   if (lesson.id === 'lesson-packet-walk') return 'arp-mac-learning';
+  if (lesson.id.includes('bgp') || lesson.id.includes('as-path') || lesson.id.includes('ebgp')) return 'bgp-best-path-selection';
   if (lesson.id.includes('tcp') || lesson.id.includes('handshake')) return 'tcp-handshake-teardown';
   if (lesson.id.includes('vlan') || lesson.id.includes('trunk') || lesson.id.includes('roas')) return 'vlan-trunking-roas';
 
@@ -25,6 +26,17 @@ export function getMatchingSimulationScenarioId(lesson: DetailedLesson): string 
   const searchText = `${lesson.id} ${lesson.slug} ${lesson.title} ${lesson.topicId} ${
     lesson.learningObjectives?.join(' ') || ''
   }`.toLowerCase();
+
+  if (
+    searchText.includes('bgp') ||
+    searchText.includes('border gateway protocol') ||
+    searchText.includes('as-path') ||
+    searchText.includes('ebgp') ||
+    searchText.includes('path attribute') ||
+    searchText.includes('best-path')
+  ) {
+    return 'bgp-best-path-selection';
+  }
 
   if (
     searchText.includes('vlan') ||

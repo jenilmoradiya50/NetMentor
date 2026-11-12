@@ -49,7 +49,13 @@ export const NodeTableInspector: React.FC<NodeTableInspectorProps> = ({
     if (selectedNode.type === 'switch') {
       setActiveTableTab('mac');
     } else if (selectedNode.type === 'router') {
-      setActiveTableTab('ospf');
+      if (tableState.ospfNeighbors && tableState.ospfNeighbors.length > 0) {
+        setActiveTableTab('ospf');
+      } else if (tableState.routingTable && tableState.routingTable.length > 0) {
+        setActiveTableTab('routing');
+      } else {
+        setActiveTableTab('socket');
+      }
     } else if (tableState.tcpState) {
       setActiveTableTab('socket');
     } else {
