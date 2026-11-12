@@ -48,7 +48,7 @@ export interface UseProtocolSimulationResult {
 /**
  * Deep clones an array of topology nodes and applies table mutations up to the given step index.
  */
-function computeAccumulatedTopology(
+export function computeAccumulatedTopology(
   baseNodes: TopologyNode[],
   steps: SimulationStep[],
   targetStepIndex: number
@@ -93,7 +93,7 @@ function computeAccumulatedTopology(
 /**
  * Applies a single node mutation (ARP, MAC, Routing, OSPF, TCP socket state).
  */
-function applySingleMutation(node: TopologyNode, mutation: NodeStateMutation) {
+export function applySingleMutation(node: TopologyNode, mutation: NodeStateMutation) {
   const { table, action, data } = mutation;
 
   switch (table) {

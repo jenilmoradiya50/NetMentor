@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsx scripts/prebuild-migrate.ts && tsc && vite build",
-    "test": "tsx tests/api-router.test.ts && tsx tests/auth.test.ts && tsx tests/importer.test.ts && tsx tests/curriculum.test.ts && tsx tests/persistence-fixture.test.ts && tsx tests/ai-context.test.ts && tsx tests/ai-api.test.ts && tsx tests/ai-frontend-integration.test.ts && tsx tests/ai-providers.test.ts && tsx tests/ai-markdown-rendering.test.ts && tsx tests/ai-conversations.test.ts && tsx tests/ai-lesson-generation.test.ts && tsx tests/ai-flashcards.test.ts && tsx tests/ai-quizzes.test.ts && tsx tests/generation-tasks-db.test.ts && tsx tests/ai-generation-tasks.test.ts && tsx tests/generation-manager.test.ts && tsx tests/migration-runner.test.ts",
+    "test": "tsx tests/api-router.test.ts && tsx tests/auth.test.ts && tsx tests/importer.test.ts && tsx tests/curriculum.test.ts && tsx tests/persistence-fixture.test.ts && tsx tests/ai-context.test.ts && tsx tests/ai-api.test.ts && tsx tests/ai-frontend-integration.test.ts && tsx tests/ai-providers.test.ts && tsx tests/ai-markdown-rendering.test.ts && tsx tests/ai-conversations.test.ts && tsx tests/ai-lesson-generation.test.ts && tsx tests/ai-flashcards.test.ts && tsx tests/ai-quizzes.test.ts && tsx tests/generation-tasks-db.test.ts && tsx tests/ai-generation-tasks.test.ts && tsx tests/generation-manager.test.ts && tsx tests/migration-runner.test.ts && tsx tests/protocol-simulation.test.ts",
     "preview": "vite preview",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
