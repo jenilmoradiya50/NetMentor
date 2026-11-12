@@ -240,9 +240,17 @@ export const TopologyVisualizer: React.FC<TopologyVisualizerProps> = ({
               <span className="text-[10px] uppercase font-mono tracking-wider text-slate-400 block">
                 In-Flight Frame on Wire
               </span>
-              <span className="text-xs font-mono font-bold text-accent truncate">
-                {packetPillText}
-              </span>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs font-mono font-bold text-accent truncate">
+                  {packetPillText}
+                </span>
+                {packet.L2.vlanTag && (
+                  <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-purple-950/80 text-purple-300 border border-purple-800/60 inline-flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-purple-400 animate-pulse" />
+                    802.1Q VID: {packet.L2.vlanTag.vlanId}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
 

@@ -19,11 +19,22 @@ export function getMatchingSimulationScenarioId(lesson: DetailedLesson): string 
   if (lesson.id === 'lesson-ospf-neighbor-states') return 'ospf-adjacency-mtu';
   if (lesson.id === 'lesson-packet-walk') return 'arp-mac-learning';
   if (lesson.id.includes('tcp') || lesson.id.includes('handshake')) return 'tcp-handshake-teardown';
+  if (lesson.id.includes('vlan') || lesson.id.includes('trunk') || lesson.id.includes('roas')) return 'vlan-trunking-roas';
 
   // 2. Keyword matching across metadata
   const searchText = `${lesson.id} ${lesson.slug} ${lesson.title} ${lesson.topicId} ${
     lesson.learningObjectives?.join(' ') || ''
   }`.toLowerCase();
+
+  if (
+    searchText.includes('vlan') ||
+    searchText.includes('trunk') ||
+    searchText.includes('802.1q') ||
+    searchText.includes('router-on-a-stick') ||
+    searchText.includes('inter-vlan')
+  ) {
+    return 'vlan-trunking-roas';
+  }
 
   if (searchText.includes('ospf') || lesson.interactiveWidget?.type === 'ospf_state_machine') {
     return 'ospf-adjacency-mtu';

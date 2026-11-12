@@ -3,6 +3,7 @@ import {
   TCP_HANDSHAKE_SCENARIO,
   ARP_MAC_LEARNING_SCENARIO,
   OSPF_ADJACENCY_SCENARIO,
+  VLAN_TRUNKING_ROAS_SCENARIO,
 } from '../src/data/simulations/index.ts';
 import {
   computeAccumulatedTopology,
@@ -45,8 +46,8 @@ async function runProtocolSimulationTests() {
   console.log('1. Testing Scenario Catalog Completeness & Metadata:');
 
   assert(
-    PROTOCOL_SIMULATION_CATALOG.length === 3,
-    `Expected exactly 3 simulation scenarios in catalog, found ${PROTOCOL_SIMULATION_CATALOG.length}`
+    PROTOCOL_SIMULATION_CATALOG.length === 4,
+    `Expected exactly 4 simulation scenarios in catalog, found ${PROTOCOL_SIMULATION_CATALOG.length}`
   );
 
   const scenarioIds = PROTOCOL_SIMULATION_CATALOG.map((s) => s.metadata.id);
@@ -61,6 +62,10 @@ async function runProtocolSimulationTests() {
   assert(
     scenarioIds.includes('ospf-adjacency-mtu'),
     'Catalog includes OSPF Adjacency & MTU Mismatch scenario'
+  );
+  assert(
+    scenarioIds.includes('vlan-trunking-roas'),
+    'Catalog includes 802.1Q VLAN Trunking & Router-on-a-Stick scenario'
   );
 
   // Validate metadata fields for every scenario
@@ -320,7 +325,66 @@ async function runProtocolSimulationTests() {
     );
   }
 
-  // D. Unit Verification of applySingleMutation Helper
+  // D. 802.1Q VLAN Trunking & Router-on-a-Stick (ROAS) Accumulation
+  {
+    console.log('   Testing 802.1Q VLAN Trunking & Router-on-a-Stick (ROAS) Accumulation:');
+    const vlanSteps = VLAN_TRUNKING_ROAS_SCENARIO.steps;
+    const baseNodes = VLAN_TRUNKING_ROAS_SCENARIO.topology.nodes;
+
+    // Step 0: PC-Sales transmits untagged frame
+    const step0Packet = vlanSteps[0].transmission.packet;
+    assert(!step0Packet.L2.vlanTag, 'Step 0 frame from PC-Sales is untagged (no 802.1Q header)');
+    assert(step0Packet.L2.dstMac === '00:1A:2B:3C:4D:R1', 'Step 0 frame destination MAC is Default Gateway R1 Gi0/0.10');
+
+    // Step 1: Switch SW-1 inserts 802.1Q tag (VID 10) and learns PC-Sales MAC in VLAN 10
+    const topoAt1 = computeAccumulatedTopology(baseNodes, vlanSteps, 1);
+    const swAt1 = topoAt1.find((n) => n.id === 'switch-1');
+    const vlan10MacEntry = swAt1?.tableState.macTable?.find(
+      (m) => m.mac === '00:1A:2B:3C:4D:10' && m.vlan === 10
+    );
+    assert(Boolean(vlan10MacEntry && vlan10MacEntry.port === 'Fa0/1'), 'Switch SW-1 learns PC-Sales MAC strictly scoped to VLAN 10 on Fa0/1');
+
+    const step1Packet = vlanSteps[1].transmission.packet;
+    assert(Boolean(step1Packet.L2.vlanTag), 'Step 1 frame across trunk link Gi0/1 carries 802.1Q tag header');
+    assert(step1Packet.L2.vlanTag?.vlanId === 10, 'Step 1 frame tag VID is exactly 10');
+    assert(step1Packet.L2.vlanTag?.pcp === 0, 'Step 1 frame Priority Code Point (PCP) is 0 (Best Effort)');
+
+    // Step 2: Router R1 receives VID 10 on Gi0/0.10, de-encapsulates, routes to Gi0/0.20, and decrements TTL
+    const step2Packet = vlanSteps[2].transmission.packet;
+    assert(!step2Packet.L2.vlanTag, 'Step 2 router internal routing strips 802.1Q header');
+    assert(step2Packet.L3.ttl === 127, 'Router R1 decrements IP TTL from 128 to 127 during inter-VLAN forwarding');
+
+    const topoAt2 = computeAccumulatedTopology(baseNodes, vlanSteps, 2);
+    const r1At2 = topoAt2.find((n) => n.id === 'router-1');
+    const r1Arp = r1At2?.tableState.arpCache?.find((a) => a.ip === '192.168.10.10');
+    assert(Boolean(r1Arp && r1Arp.mac === '00:1A:2B:3C:4D:10'), 'Router R1 records PC-Sales ARP entry on sub-interface Gi0/0.10');
+
+    // Step 3: Router R1 re-encapsulates with VID 20 tag on trunk port toward SW-1
+    const step3Packet = vlanSteps[3].transmission.packet;
+    assert(Boolean(step3Packet.L2.vlanTag && step3Packet.L2.vlanTag.vlanId === 20), 'Step 3 routed packet is re-encapsulated with 802.1Q VID 20');
+    assert(step3Packet.L2.srcMac === '00:1A:2B:3C:4D:R2', 'Step 3 frame source MAC is Router sub-interface Gi0/0.20');
+    assert(step3Packet.L2.dstMac === '00:1A:2B:3C:4D:20', 'Step 3 frame destination MAC is PC-Eng');
+
+    // Step 4: Switch SW-1 forwards out access port Fa0/2 with tag stripped and learns PC-Eng in VLAN 20
+    const step4Packet = vlanSteps[4].transmission.packet;
+    assert(!step4Packet.L2.vlanTag, 'Step 4 access egress port Fa0/2 strips 802.1Q tag header');
+
+    const topoAt4 = computeAccumulatedTopology(baseNodes, vlanSteps, 4);
+    const swAt4 = topoAt4.find((n) => n.id === 'switch-1');
+    const vlan20MacEntry = swAt4?.tableState.macTable?.find(
+      (m) => m.mac === '00:1A:2B:3C:4D:20' && m.vlan === 20
+    );
+    assert(Boolean(vlan20MacEntry && vlan20MacEntry.port === 'Fa0/2'), 'Switch SW-1 learns PC-Eng MAC strictly scoped to VLAN 20 on Fa0/2');
+    assert(swAt4?.tableState.macTable?.length === 2, 'Switch CAM table maintains both VLAN 10 and VLAN 20 isolated entries');
+
+    // Step 5: PC-Eng receives frame, populates ARP cache, and prepares ICMP Echo Reply
+    const topoAtFinal = computeAccumulatedTopology(baseNodes, vlanSteps, vlanSteps.length - 1);
+    const pcEngAtFinal = topoAtFinal.find((n) => n.id === 'pc-eng');
+    const pcEngArp = pcEngAtFinal?.tableState.arpCache?.find((a) => a.ip === '192.168.20.1');
+    assert(Boolean(pcEngArp && pcEngArp.mac === '00:1A:2B:3C:4D:R2'), 'PC-Eng records default gateway R1 Gi0/0.20 in its ARP cache');
+  }
+
+  // E. Unit Verification of applySingleMutation Helper
   {
     console.log('   Testing applySingleMutation Primitive Resiliency:');
     const dummyNode: TopologyNode = {
@@ -431,7 +495,7 @@ async function runProtocolSimulationTests() {
     }
   }
 
-  assert(totalCheckpoints >= 3, `Verified ${totalCheckpoints} total Socratic checkpoints across all simulation scenarios`);
+  assert(totalCheckpoints >= 4, `Verified ${totalCheckpoints} total Socratic checkpoints across all simulation scenarios`);
 
   console.log('\n=============================================================');
   console.log(`✓ ALL ${passed} PROTOCOL SIMULATION CHECKS PASSED CLEANLY! (0 failures)`);
