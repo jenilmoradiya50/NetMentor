@@ -21,6 +21,7 @@ import {
   Bot,
   BookOpen,
   FileQuestion,
+  Activity,
 } from 'lucide-react';
 import { AiTutorProvider, useAiTutor } from './context/AiTutorContext';
 import { AiTutorDrawer } from './components/curriculum/AiTutorDrawer';
@@ -35,6 +36,9 @@ import { FloatingGenerationWidget } from './components/common/FloatingGeneration
 import { GenerateQuizModal } from './components/quizzes/GenerateQuizModal';
 
 // Route-Level Code Splitting (Dynamic Lazy Imports)
+const CommandCenterDashboard = lazy(() =>
+  import('./components/dashboard/CommandCenterDashboard').then((m) => ({ default: m.CommandCenterDashboard })),
+);
 const CurriculumHub = lazy(() =>
   import('./components/curriculum/CurriculumHub').then((m) => ({ default: m.CurriculumHub })),
 );
@@ -77,7 +81,7 @@ function ViewLoadingFallback({ message = 'Loading module...' }: { message?: stri
   );
 }
 
-type TabId = 'curriculum' | 'flashcards' | 'quizzes' | 'labs' | 'library';
+type TabId = 'dashboard' | 'curriculum' | 'flashcards' | 'quizzes' | 'labs' | 'library';
 
 function Dashboard() {
   const { logout, isDemoMode, exitDemoMode, user, sessionExpiresAt } = useAuth();
@@ -95,9 +99,11 @@ function Dashboard() {
   const [mainTab, setMainTab] = useState<TabId>(() => {
     if (typeof window !== 'undefined') {
       const t = new URLSearchParams(window.location.search).get('tab');
-      if (t === 'flashcards' || t === 'quizzes' || t === 'labs' || t === 'curriculum' || t === 'library') return t;
+      if (t === 'dashboard' || t === 'flashcards' || t === 'quizzes' || t === 'labs' || t === 'curriculum' || t === 'library') {
+        return t as TabId;
+      }
     }
-    return 'flashcards';
+    return 'dashboard';
   });
   const [activeLessonId, setActiveLessonId] = useState<string | null>(() => {
     if (typeof window !== 'undefined') {
@@ -204,8 +210,10 @@ function Dashboard() {
       if (typeof window !== 'undefined') {
         const params = new URLSearchParams(window.location.search);
         const tab = params.get('tab');
-        if (tab === 'flashcards' || tab === 'quizzes' || tab === 'labs' || tab === 'curriculum' || tab === 'library') {
+        if (tab === 'dashboard' || tab === 'flashcards' || tab === 'quizzes' || tab === 'labs' || tab === 'curriculum' || tab === 'library') {
           setMainTab(tab as TabId);
+        } else if (!tab) {
+          setMainTab('dashboard');
         }
         const lesson = params.get('lesson');
         setActiveLessonId(lesson);
@@ -456,12 +464,24 @@ function Dashboard() {
     });
   };
 
-  const navOptions = [
+  const desktopNavOptions = [
+    {
+      id: 'dashboard' as TabId,
+      label: 'Command Center',
+      icon: <Activity className="w-4 h-4" />,
+      badge: 'Hub',
+    },
     {
       id: 'curriculum' as TabId,
       label: 'Curriculum',
       icon: <Compass className="w-4 h-4" />,
       badge: 'Core',
+    },
+    {
+      id: 'labs' as TabId,
+      label: 'Labs',
+      icon: <Network className="w-4 h-4" />,
+      badge: '5 Sims',
     },
     {
       id: 'flashcards' as TabId,
@@ -476,16 +496,48 @@ function Dashboard() {
       badge: 'AI',
     },
     {
-      id: 'labs' as TabId,
-      label: 'Labs',
-      icon: <Network className="w-4 h-4" />,
-      badge: '48 .pkt',
-    },
-    {
       id: 'library' as TabId,
       label: 'Personal Library',
       icon: <BookOpen className="w-4 h-4" />,
       badge: 'AI',
+    },
+  ];
+
+  const mobileNavOptions: Array<{
+    id: TabId;
+    label: string;
+    icon: React.ReactNode;
+    isActive: boolean;
+  }> = [
+    {
+      id: 'dashboard',
+      label: 'Home',
+      icon: <Activity className="w-5 h-5" />,
+      isActive: mainTab === 'dashboard',
+    },
+    {
+      id: 'curriculum',
+      label: 'Learn',
+      icon: <Compass className="w-5 h-5" />,
+      isActive: mainTab === 'curriculum',
+    },
+    {
+      id: 'labs',
+      label: 'Labs',
+      icon: <Network className="w-5 h-5" />,
+      isActive: mainTab === 'labs',
+    },
+    {
+      id: 'flashcards',
+      label: 'Practice',
+      icon: <Layers className="w-5 h-5" />,
+      isActive: mainTab === 'flashcards' || mainTab === 'quizzes',
+    },
+    {
+      id: 'library',
+      label: 'Library',
+      icon: <BookOpen className="w-5 h-5" />,
+      isActive: mainTab === 'library',
     },
   ];
 
@@ -511,7 +563,7 @@ function Dashboard() {
       )}
 
       {/* Floating Glass Navigation Header */}
-      <header className="glass-nav sticky top-0 z-30 safe-top">
+      <header className="glass-nav sticky top-0 z-30 safe-top w-full border-b border-border-hairline">
         <div className="max-w-6xl mx-auto px-4 py-2.5 flex items-center justify-between gap-3">
           {/* Brand Identity / Sticky Lesson Back Navigation */}
           {isInsideLesson && (activeLessonData || selectedGeneratedLesson) ? (
@@ -536,8 +588,12 @@ function Dashboard() {
               </button>
             </div>
           ) : (
-            <div className="flex items-center gap-3">
-              <div className="h-9 w-9 rounded-xl bg-surface-elevated flex items-center justify-center shadow-md border border-border-hairline overflow-hidden p-0.5">
+            <button
+              type="button"
+              onClick={() => handleTabChange('dashboard')}
+              className="flex items-center gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-xl press-scale-subtle"
+            >
+              <div className="h-9 w-9 rounded-xl bg-surface-elevated flex items-center justify-center shadow-md border border-border-hairline overflow-hidden p-0.5 flex-shrink-0">
                 <img src="/icon.svg" alt="NetMentor" className="w-full h-full object-contain" />
               </div>
               <div>
@@ -546,20 +602,20 @@ function Dashboard() {
                     NetMentor
                   </span>
                   {isDemoMode ? (
-                    <Badge variant="amber" size="sm" className="hidden xs:inline-flex">
+                    <Badge variant="amber" size="sm" className="hidden sm:inline-flex">
                       Demo Mode
                     </Badge>
                   ) : (
-                    <Badge variant="blue" size="sm" className="hidden xs:inline-flex">
+                    <Badge variant="blue" size="sm" className="hidden sm:inline-flex">
                       Protected
                     </Badge>
                   )}
                 </div>
                 <p className="text-[11px] text-slate-400 hidden sm:block">
-                  Interactive Networking Engineering & CCNA / CCNP Mastery
+                  Interactive Networking Engineering &amp; CCNA / CCNP Mastery
                 </p>
               </div>
-            </div>
+            </button>
           )}
 
           {/* Desktop Right Controls (AI Tutor, Database status, Session info & Logout) */}
@@ -608,18 +664,18 @@ function Dashboard() {
             <button
               type="button"
               onClick={() => openTutor()}
-              className="p-2 rounded-xl bg-surface-elevated text-accent border border-slate-700/60 press-scale min-h-[44px] min-w-[44px] flex items-center justify-center relative"
+              className="p-2 rounded-xl bg-surface-elevated text-accent border border-border-hairline press-scale min-h-[44px] min-w-[44px] flex items-center justify-center relative touch-target-44"
               aria-label="Open NetMentor AI Tutor"
               title="Ask AI Tutor"
             >
               <Bot className="w-4 h-4 text-accent" />
-              <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-accent animate-pulse" />
+              <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-accent animate-pulse" />
             </button>
             <DatabaseStatusBadge showLatency={false} />
             <button
               type="button"
               onClick={() => setIsMobileAccountOpen(true)}
-              className="p-2 rounded-xl bg-surface-elevated text-slate-300 border border-slate-700/60 press-scale min-h-[44px] min-w-[44px] flex items-center justify-center"
+              className="p-2 rounded-xl bg-surface-elevated text-slate-300 border border-border-hairline press-scale min-h-[44px] min-w-[44px] flex items-center justify-center touch-target-44"
               aria-label="Account details"
             >
               <ShieldCheck className="w-4 h-4 text-emerald-400" />
@@ -629,16 +685,16 @@ function Dashboard() {
       </header>
 
       {/* Desktop Platform Navigation Bar with Bold Blue Active Indicator */}
-      <nav aria-label="Desktop Platform Navigation" className="glass-subnav sticky top-[53px] z-20 hidden md:block">
+      <nav aria-label="Desktop Platform Navigation" className="glass-subnav sticky top-[53px] z-20 hidden md:block border-b border-border-hairline">
         <div className="max-w-6xl mx-auto px-4 flex items-center gap-1">
-          {navOptions.map((opt) => {
+          {desktopNavOptions.map((opt) => {
             const isSelected = opt.id === mainTab;
             return (
               <button
                 key={opt.id}
                 type="button"
                 onClick={() => handleTabChange(opt.id)}
-                className={`py-3 px-4 text-xs font-semibold flex items-center gap-2 border-b-2 transition-all select-none press-scale-subtle ${
+                className={`py-3 px-3.5 text-xs font-semibold flex items-center gap-2 border-b-2 transition-all select-none press-scale-subtle ${
                   isSelected
                     ? 'border-brand-500 text-brand-300 bg-brand-500/10'
                     : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-white/[0.03]'
@@ -663,14 +719,23 @@ function Dashboard() {
         </div>
       </nav>
 
-      {/* Main Content Area (extra bottom padding only on screens with floating dock) */}
+      {/* Main Content Area */}
       <main
         className={`flex-1 max-w-6xl w-full mx-auto px-4 py-6 sm:py-8 ${
-          isInsideLesson ? 'pb-8 md:pb-12' : 'pb-32 md:pb-12'
+          isInsideLesson ? 'pb-8 md:pb-12' : 'pb-24 md:pb-8'
         }`}
       >
         <Suspense fallback={<ViewLoadingFallback />}>
-          {mainTab === 'flashcards' ? (
+          {mainTab === 'dashboard' ? (
+            <CommandCenterDashboard
+              onNavigateToCurriculum={() => handleTabChange('curriculum')}
+              onNavigateToLabs={handleNavigateToLabs}
+              onNavigateToFlashcards={() => handleTabChange('flashcards')}
+              onNavigateToQuizzes={() => handleTabChange('quizzes')}
+              onNavigateToLibrary={() => handleTabChange('library')}
+              onOpenAiTutor={() => openTutor()}
+            />
+          ) : mainTab === 'flashcards' ? (
             <FlashcardsHub
               initialStudyingDeckId={studyingDeckId}
               onClearStudyingDeck={() => setStudyingDeckId(null)}
@@ -751,34 +816,37 @@ function Dashboard() {
             />
           )}
         </Suspense>
-
-        {/* Mobile bottom clearance spacer ensuring content never sits behind the floating dock */}
-        {!isInsideLesson && (
-          <div className="h-20 md:hidden pointer-events-none" aria-hidden="true" />
-        )}
       </main>
 
-      {/* Mobile Floating iOS-style Navigation Dock (Hidden inside individual lesson) */}
+      {/* Mobile Bottom Navigation Dock */}
       {!isInsideLesson && (
         <nav
           aria-label="Mobile Navigation"
-          className="md:hidden fixed bottom-3 left-4 right-4 z-40 glass-dock rounded-2xl p-1.5 flex items-center justify-around shadow-2xl safe-bottom"
+          className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-[#111317]/95 backdrop-blur-md border-t border-[#232730] pb-[env(safe-area-inset-bottom)] px-2 pt-1 flex items-center justify-around shadow-2xl safe-bottom"
         >
-          {navOptions.map((opt) => {
-            const isActive = mainTab === opt.id;
+          {mobileNavOptions.map((opt) => {
             return (
               <button
                 key={opt.id}
                 type="button"
                 onClick={() => handleTabChange(opt.id)}
-                className={`flex-1 flex flex-col items-center justify-center py-1.5 px-2 rounded-xl text-xs font-medium transition-all duration-150 min-h-[44px] press-scale select-none ${
-                  isActive
-                    ? 'bg-brand-600 text-white font-semibold shadow-md shadow-brand-500/25'
+                className={`flex-1 flex flex-col items-center justify-center py-2 px-1 relative transition-colors select-none touch-target-44 min-h-[48px] ${
+                  opt.isActive
+                    ? 'text-[#F59E0B]'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                <span className="mb-0.5">{opt.icon}</span>
-                <span className="text-[11px] tracking-tight">{opt.label}</span>
+                {opt.isActive && (
+                  <span className="absolute top-0 inset-x-4 h-[2px] bg-[#F59E0B] rounded-full shadow-[0_0_8px_rgba(245,158,11,0.6)]" />
+                )}
+                <span className="mb-1">{opt.icon}</span>
+                <span
+                  className={`whitespace-nowrap text-[10px] tracking-tight leading-none ${
+                    opt.isActive ? 'text-white font-semibold' : 'text-slate-400 font-medium'
+                  }`}
+                >
+                  {opt.label}
+                </span>
               </button>
             );
           })}
@@ -838,15 +906,11 @@ function Dashboard() {
         </div>
       </Sheet>
 
-      {/* Floating Ask AI Tutor Entry Button (Single persistent global entry point) */}
+      {/* Floating Ask AI Tutor Entry Button (Desktop only; hidden on mobile) */}
       <button
         type="button"
         onClick={() => openTutor()}
-        className={`fixed z-40 flex items-center gap-2.5 px-3.5 sm:px-4 py-2.5 rounded-full bg-surface-elevated/95 border border-accent/40 text-white shadow-xl shadow-black/50 hover:border-accent hover:bg-surface-elevated hover:shadow-accent/20 focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none transition-all press-scale backdrop-blur-md min-h-[44px] touch-target-44 ${
-          isInsideLesson
-            ? 'bottom-[max(1.25rem,env(safe-area-inset-bottom,1.25rem))] right-4 sm:bottom-6 sm:right-6'
-            : 'bottom-24 right-4 md:bottom-6 md:right-6'
-        }`}
+        className="fixed z-40 hidden md:inline-flex items-center gap-2.5 px-4 py-2.5 rounded-full bg-surface-elevated/95 border border-accent/40 text-white shadow-xl shadow-black/50 hover:border-accent hover:bg-surface-elevated hover:shadow-accent/20 focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none transition-all press-scale backdrop-blur-md min-h-[44px] touch-target-44 bottom-6 right-6"
         aria-label="Open NetMentor AI Tutor"
       >
         <div className="w-2 h-2 rounded-full bg-accent animate-pulse" />
