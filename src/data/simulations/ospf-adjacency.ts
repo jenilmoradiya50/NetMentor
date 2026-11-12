@@ -367,4 +367,99 @@ export const OSPF_ADJACENCY_SCENARIO: ProtocolSimulationScenario = {
       },
     },
   ],
+  cliConfig: {
+    protocolScope: 'OSPF',
+    targetNodeId: 'router-2',
+    promptHostname: 'R2#',
+    objective:
+      'Resolve the OSPF MTU mismatch on Gi0/0 (local MTU 1400 vs R1 MTU 1500) so neighbor adjacency transitions from EXSTART to FULL.',
+    initialConfigLines: [
+      'interface GigabitEthernet0/0',
+      ' ip address 10.0.0.2 255.255.255.252',
+      ' ip mtu 1400  ! Mismatched: Core router R1 is set to 1500',
+      ' ip ospf 1 area 0',
+    ],
+    allowedCommands: [
+      {
+        command: 'show ip ospf neighbor',
+        aliases: ['sh ip ospf nei', 'sh ip ospf neighbor', 'show ip ospf nei'],
+        description: 'Display active OSPF neighbor states and interface assignments',
+        output:
+          'Neighbor ID     Pri   State           Dead Time   Address         Interface\n1.1.1.1           1   EXSTART/DR      00:00:34    10.0.0.1        GigabitEthernet0/0\n%OSPF-4-ERRMTU: Received DBD with MTU 1500 from 1.1.1.1 exceeds local MTU 1400',
+      },
+      {
+        command: 'show ip interface GigabitEthernet0/0',
+        aliases: [
+          'sh ip int gi0/0',
+          'show ip int gi0/0',
+          'sh ip interface gi0/0',
+          'show ip interface GigabitEthernet 0/0',
+        ],
+        description: 'Display IP interface status, MTU, and OSPF network type',
+        output:
+          'GigabitEthernet0/0 is up, line protocol is up\n  Internet Address 10.0.0.2/30, Area 0\n  MTU is 1400 bytes, BW 1000000 Kbit/sec, DLY 10 usec\n  Process ID 1, Router ID 2.2.2.2, Network Type BROADCAST, Cost: 1\n  State BDR, Priority 1\n  No hello timer mismatch (Hello 10, Dead 40)',
+      },
+      {
+        command: 'show running-config interface GigabitEthernet0/0',
+        aliases: [
+          'sh run int gi0/0',
+          'show run int gi0/0',
+          'show run interface gi0/0',
+          'sh run interface GigabitEthernet0/0',
+        ],
+        description: 'Inspect the current interface configuration snippet',
+        output:
+          'Building configuration...\n\nCurrent configuration : 138 bytes\n!\ninterface GigabitEthernet0/0\n ip address 10.0.0.2 255.255.255.252\n ip mtu 1400\n ip ospf 1 area 0\nend',
+      },
+      {
+        command: 'show ip route',
+        aliases: ['sh ip route', 'sh ip ro', 'show ip ro'],
+        description: 'View the current IPv4 routing table',
+        output:
+          'Codes: C - connected, S - static, O - OSPF, B - BGP\n\nGateway of last resort is not set\n\n      10.0.0.0/30 is subnetted, 1 subnets\nC        10.0.0.0 is directly connected, GigabitEthernet0/0\n(Note: OSPF routes not installed due to EXSTART state)',
+      },
+      {
+        command: 'ip mtu 1500',
+        aliases: [
+          'interface GigabitEthernet0/0; ip mtu 1500',
+          'int gi0/0; ip mtu 1500',
+          'conf t; int gi0/0; ip mtu 1500',
+          'ip ospf mtu-ignore',
+          'int gi0/0; ip ospf mtu-ignore',
+        ],
+        description: 'Remediate MTU mismatch to standard 1500 bytes (or ignore MTU)',
+        output:
+          'R2(config)# interface GigabitEthernet0/0\nR2(config-if)# ip mtu 1500\n%OSPF-5-ADJCHG: Process 1, Nbr 1.1.1.1 on GigabitEthernet0/0 from EXSTART to FULL, Loading Done\n%SYS-5-CONFIG_I: Configured from console by netmentor',
+        tableMutations: [
+          {
+            nodeId: 'router-2',
+            table: 'ospf',
+            action: 'update',
+            data: { neighborId: '1.1.1.1', state: 'FULL', address: '10.0.0.1', interface: 'Gi0/0' },
+          },
+          {
+            nodeId: 'router-1',
+            table: 'ospf',
+            action: 'update',
+            data: { neighborId: '2.2.2.2', state: 'FULL', address: '10.0.0.2', interface: 'Gi0/0' },
+          },
+          {
+            nodeId: 'router-2',
+            table: 'routing',
+            action: 'add',
+            data: {
+              network: '192.168.1.0',
+              mask: '255.255.255.0',
+              nextHop: '10.0.0.1',
+              interface: 'Gi0/0',
+              protocol: 'O',
+              metric: 2,
+              adminDistance: 110,
+            },
+          },
+        ],
+        goalAchieved: true,
+      },
+    ],
+  },
 };

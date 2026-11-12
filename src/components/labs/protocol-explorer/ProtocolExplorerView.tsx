@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { useProtocolSimulation } from '../../../hooks/useProtocolSimulation';
 import { PROTOCOL_SIMULATION_CATALOG, TCP_HANDSHAKE_SCENARIO } from '../../../data/simulations';
+import type { ProtocolSimulationScenario } from '../../../types/protocol-simulation';
 import { TopologyVisualizer } from './TopologyVisualizer';
 import { SimulationPlaybackControls } from './SimulationPlaybackControls';
 import { PacketHeaderInspector } from './PacketHeaderInspector';
 import { NodeTableInspector } from './NodeTableInspector';
-import { Card, Badge } from '../../ui';
-import { Network, Info } from 'lucide-react';
+import { ProtocolCliConsole } from './ProtocolCliConsole';
+import { AiScenarioGeneratorModal } from './AiScenarioGeneratorModal';
+import { Card, Badge, Button } from '../../ui';
+import { Network, Info, Sparkles } from 'lucide-react';
 
 export interface ProtocolExplorerViewProps {
   initialScenarioId?: string | null;
@@ -26,9 +29,13 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
   const [selectedNodeId, setSelectedNodeId] = useState<string>(
     initialScenario.topology.nodes[0]?.id || 'host-client'
   );
+  const [customScenarios, setCustomScenarios] = useState<ProtocolSimulationScenario[]>([]);
+  const [isGenModalOpen, setIsGenModalOpen] = useState<boolean>(false);
+
+  const fullCatalog = [...PROTOCOL_SIMULATION_CATALOG, ...customScenarios];
 
   const activeScenario =
-    PROTOCOL_SIMULATION_CATALOG.find((s) => s.metadata.id === selectedScenarioId) ||
+    fullCatalog.find((s) => s.metadata.id === selectedScenarioId) ||
     initialScenario;
 
   const {
@@ -43,6 +50,11 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
     isAtStart,
     isAtEnd,
     progressPercentage,
+    cliHistory,
+    promptHostname,
+    isObjectiveSolved,
+    executeCliCommand,
+    resetCli,
     play,
     pause,
     togglePlay,
@@ -58,7 +70,7 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
   // Synchronize scenario state when initialScenarioId prop changes from parent navigation
   useEffect(() => {
     if (initialScenarioId) {
-      const match = PROTOCOL_SIMULATION_CATALOG.find((s) => s.metadata.id === initialScenarioId);
+      const match = fullCatalog.find((s) => s.metadata.id === initialScenarioId);
       if (match && match.metadata.id !== selectedScenarioId) {
         setSelectedScenarioId(match.metadata.id);
         setScenario(match);
@@ -66,6 +78,13 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
       }
     }
   }, [initialScenarioId, selectedScenarioId, setScenario]);
+
+  const handleCustomScenarioGenerated = (newScenario: ProtocolSimulationScenario) => {
+    setCustomScenarios((prev) => [newScenario, ...prev]);
+    setSelectedScenarioId(newScenario.metadata.id);
+    setScenario(newScenario);
+    setSelectedNodeId(newScenario.topology.nodes[0]?.id || 'node-1');
+  };
 
   if (!currentStep) return null;
 
@@ -93,38 +112,52 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
             </div>
           </div>
 
-          {/* Scenario Selector Dropdown */}
-          <div className="flex items-center gap-2 self-start md:self-center">
-            <label htmlFor="scenario-select" className="text-xs font-mono text-slate-400 whitespace-nowrap">
-              Scenario:
-            </label>
-            <select
-              id="scenario-select"
-              value={selectedScenarioId}
-              onChange={(e) => {
-                const nextId = e.target.value;
-                setSelectedScenarioId(nextId);
-                const nextScenario = PROTOCOL_SIMULATION_CATALOG.find((s) => s.metadata.id === nextId);
-                if (nextScenario) {
-                  setScenario(nextScenario);
-                  setSelectedNodeId(nextScenario.topology.nodes[0]?.id || 'host-client');
-                  if (typeof window !== 'undefined') {
-                    const url = new URL(window.location.href);
-                    if (url.searchParams.get('tab') === 'labs') {
-                      url.searchParams.set('scenario', nextId);
-                      window.history.replaceState({}, '', url.toString());
+          {/* Scenario Selector Dropdown & AI Generator Launch Button */}
+          <div className="flex items-center gap-2.5 self-start md:self-center flex-wrap">
+            <div className="flex items-center gap-2">
+              <label htmlFor="scenario-select" className="text-xs font-mono text-slate-400 whitespace-nowrap">
+                Scenario:
+              </label>
+              <select
+                id="scenario-select"
+                value={selectedScenarioId}
+                onChange={(e) => {
+                  const nextId = e.target.value;
+                  setSelectedScenarioId(nextId);
+                  const nextScenario = fullCatalog.find((s) => s.metadata.id === nextId);
+                  if (nextScenario) {
+                    setScenario(nextScenario);
+                    setSelectedNodeId(nextScenario.topology.nodes[0]?.id || 'host-client');
+                    if (typeof window !== 'undefined') {
+                      const url = new URL(window.location.href);
+                      if (url.searchParams.get('tab') === 'labs') {
+                        url.searchParams.set('scenario', nextId);
+                        window.history.replaceState({}, '', url.toString());
+                      }
                     }
                   }
-                }
-              }}
-              className="px-3 py-2 rounded-xl bg-surface border border-border-hairline text-xs font-semibold text-white focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent min-h-[40px]"
+                }}
+                className="px-3 py-2 rounded-xl bg-surface border border-border-hairline text-xs font-semibold text-white focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent min-h-[40px] max-w-[200px] sm:max-w-xs"
+              >
+                {fullCatalog.map((s) => (
+                  <option key={s.metadata.id} value={s.metadata.id} className="bg-canvas text-white">
+                    {s.metadata.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setIsGenModalOpen(true)}
+              icon={<Sparkles className="w-3.5 h-3.5 text-accent" />}
+              className="touch-target-44 min-h-[40px]"
+              title="Generate custom networking scenario with AI"
             >
-              {PROTOCOL_SIMULATION_CATALOG.map((s) => (
-                <option key={s.metadata.id} value={s.metadata.id} className="bg-canvas text-white">
-                  {s.metadata.title}
-                </option>
-              ))}
-            </select>
+              <span className="hidden sm:inline">AI Generate Lab</span>
+              <span className="sm:hidden">AI Lab</span>
+            </Button>
           </div>
         </div>
 
@@ -171,6 +204,16 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
         onSetSpeed={setSpeed}
       />
 
+      {/* Topic-Bounded In-App Cisco IOS CLI Console */}
+      <ProtocolCliConsole
+        cliConfig={scenario.cliConfig}
+        cliHistory={cliHistory}
+        promptHostname={promptHostname}
+        isObjectiveSolved={isObjectiveSolved}
+        onExecuteCommand={executeCliCommand}
+        onResetCli={resetCli}
+      />
+
       {/* Deep Inspection Grid: Header Ladder & Node Internal States */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
         {/* Left Column: Packet Header Encapsulation Inspector */}
@@ -193,6 +236,13 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
           packet={currentStep.transmission.packet}
         />
       </div>
+
+      {/* AI Scenario Generator Sheet Modal */}
+      <AiScenarioGeneratorModal
+        isOpen={isGenModalOpen}
+        onClose={() => setIsGenModalOpen(false)}
+        onScenarioGenerated={handleCustomScenarioGenerated}
+      />
     </div>
   );
 };

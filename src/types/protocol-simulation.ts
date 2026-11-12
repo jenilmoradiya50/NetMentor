@@ -187,6 +187,27 @@ export interface DefaultViewport {
   centerY: number;
 }
 
+export type CliProtocolScope = 'OSPF' | 'BGP' | 'VLAN' | 'ARP' | 'TCP' | 'GENERAL';
+
+export interface CliCommandDefinition {
+  command: string;
+  aliases?: string[];
+  description?: string;
+  output: string;
+  tableMutations?: NodeStateMutation[];
+  goalAchieved?: boolean;
+  nextPromptHostname?: string;
+}
+
+export interface ScenarioCliConfig {
+  protocolScope: CliProtocolScope;
+  targetNodeId: string;
+  promptHostname: string;
+  initialConfigLines: string[];
+  allowedCommands: CliCommandDefinition[];
+  objective: string;
+}
+
 export interface ProtocolSimulationScenario {
   metadata: SimulationMetadata;
   topology: {
@@ -195,6 +216,7 @@ export interface ProtocolSimulationScenario {
   };
   steps: SimulationStep[];
   defaultViewport?: DefaultViewport;
+  cliConfig?: ScenarioCliConfig;
 }
 
 export type InspectedLayer = 'L2' | 'L3' | 'L4' | 'Payload';

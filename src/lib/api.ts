@@ -798,4 +798,18 @@ export const tasksApi = {
     ),
 };
 
+export async function generateSimulationScenario(params: {
+  topic: string;
+  certification?: string;
+  protocol?: string;
+  difficulty?: string;
+  faultScenario?: string;
+}): Promise<ApiResponse<{ success: boolean; scenario: any; model?: string; isSimulated?: boolean }>> {
+  return fetchApi('/api/generate-simulation', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+}
+
+
 

@@ -40,6 +40,7 @@ import conversationsHandler from './_routes/ai/conversations.js';
 import generateFlashcardsHandler from './_routes/ai/generate-flashcards.js';
 import generateLessonHandler from './_routes/ai/generate-lesson.js';
 import generateQuizHandler from './_routes/ai/generate-quiz.js';
+import generateSimulationHandler from './_routes/ai/generate-simulation.js';
 import tutorHandler from './_routes/ai/tutor.js';
 import getActiveTasksHandler from './_routes/ai/tasks/active.js';
 import createTaskHandler from './_routes/ai/tasks/create.js';
@@ -78,6 +79,8 @@ export const STATIC_ROUTES: Record<string, RouteHandlerFn> = {
   '/api/ai/generate-flashcards': generateFlashcardsHandler,
   '/api/ai/generate-lesson': generateLessonHandler,
   '/api/ai/generate-quiz': generateQuizHandler,
+  '/api/ai/generate-simulation': generateSimulationHandler,
+  '/api/generate-simulation': generateSimulationHandler,
   '/api/ai/tutor': tutorHandler,
   '/api/ai/tasks/active': getActiveTasksHandler,
   '/api/ai/tasks/create': createTaskHandler,

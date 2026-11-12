@@ -422,4 +422,57 @@ export const ARP_MAC_LEARNING_SCENARIO: ProtocolSimulationScenario = {
       },
     },
   ],
+  cliConfig: {
+    protocolScope: 'ARP',
+    targetNodeId: 'host-a',
+    promptHostname: 'Host-A#',
+    objective:
+      'Inspect initial ARP table, trigger ARP resolution to default gateway (192.168.1.254), and verify learned MAC entry.',
+    initialConfigLines: [
+      'Interface FastEthernet0',
+      ' IP Address 192.168.1.10 255.255.255.0',
+      ' Default Gateway 192.168.1.254',
+      ' MAC Address 00:1A:2B:3C:4D:0A',
+    ],
+    allowedCommands: [
+      {
+        command: 'arp -a',
+        aliases: ['show arp', 'sh arp', 'arp -n'],
+        description: 'Display active local IPv4-to-MAC resolution cache',
+        output:
+          'Internet Address      Physical Address      Type\n192.168.1.20          00-1a-2b-3c-4d-0b     dynamic\n(Note: Gateway 192.168.1.254 is not yet in ARP table)',
+      },
+      {
+        command: 'show ip interface brief',
+        aliases: ['sh ip int br', 'sh ip int brief', 'ipconfig'],
+        description: 'Display IP address, link status, and interface assignment',
+        output:
+          'Interface              IP-Address      OK? Method Status                Protocol\nFastEthernet0          192.168.1.10    YES manual up                    up',
+      },
+      {
+        command: 'ping 192.168.1.254',
+        aliases: [
+          'ping gateway',
+          'arp -s 192.168.1.254 00-00-0c-07-ac-01',
+          'resolve gateway',
+        ],
+        description: 'Send ICMP Echo Request to default gateway triggering ARP broadcast',
+        output:
+          'Pinging 192.168.1.254 with 32 bytes of data:\nReply from 192.168.1.254: bytes=32 time=1ms TTL=64\nReply from 192.168.1.254: bytes=32 time=1ms TTL=64\n\n%ARP-5-ENTRY_LEARNED: Dynamic ARP mapping installed: 192.168.1.254 -> 00:00:0C:07:AC:01 on FastEthernet0',
+        tableMutations: [
+          {
+            nodeId: 'host-a',
+            table: 'arp',
+            action: 'add',
+            data: {
+              ip: '192.168.1.254',
+              mac: '00:00:0C:07:AC:01',
+              interface: 'eth0',
+            },
+          },
+        ],
+        goalAchieved: true,
+      },
+    ],
+  },
 };

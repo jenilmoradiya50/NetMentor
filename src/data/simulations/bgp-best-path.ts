@@ -527,4 +527,54 @@ export const BGP_BEST_PATH_SCENARIO: ProtocolSimulationScenario = {
       },
     },
   ],
+  cliConfig: {
+    protocolScope: 'BGP',
+    targetNodeId: 'r1-edge',
+    promptHostname: 'R1-Edge#',
+    objective:
+      'Evaluate BGP best-path criteria on R1-Edge for prefix 203.0.113.0/24 and verify ISP-B is selected via shortest AS-Path length.',
+    initialConfigLines: [
+      'router bgp 65001',
+      ' bgp router-id 10.1.1.1',
+      ' neighbor 172.16.1.2 remote-as 65100',
+      ' neighbor 172.16.1.2 description Upstream-ISP-A',
+      ' neighbor 172.16.2.2 remote-as 65200',
+      ' neighbor 172.16.2.2 description Secondary-ISP-B',
+    ],
+    allowedCommands: [
+      {
+        command: 'show ip bgp summary',
+        aliases: ['sh ip bgp summary', 'sh ip bgp sum', 'show ip bgp sum'],
+        description: 'Display BGP neighbor states, AS numbers, and prefix counters',
+        output:
+          'BGP router identifier 10.1.1.1, local AS number 65001\nBGP table version is 3, main routing table version 3\n\nNeighbor        V           AS MsgRcvd MsgSent   TblVer  InQ OutQ Up/Down  State/PfxRcd\n172.16.1.2      4        65100       8       8        3    0    0 00:04:12        1\n172.16.2.2      4        65200       8       8        3    0    0 00:04:15        1',
+      },
+      {
+        command: 'show ip bgp',
+        aliases: ['sh ip bgp', 'show ip bgp 203.0.113.0/24', 'sh ip bgp 203.0.113.0'],
+        description: 'Display the BGP routing table and best-path selection (*>)',
+        output:
+          'BGP table version is 3, local router ID is 10.1.1.1\nStatus codes: s suppressed, d damped, h history, * valid, > best, i - internal\n\n     Network          Next Hop            Metric LocPrf Weight Path\n *   203.0.113.0/24   172.16.1.2             100             0 65100 65900 i\n *>                   172.16.2.2             200             0 65200 i\n\n%BGP-5-BESTPATH: 203.0.113.0/24 best path selected via 172.16.2.2 (AS-Path length: 1 vs 2)',
+      },
+      {
+        command: 'show ip route bgp',
+        aliases: ['sh ip route bgp', 'sh ip ro bgp', 'show ip ro bgp'],
+        description: 'Verify which BGP route is installed in the IPv4 FIB',
+        output:
+          'Codes: C - connected, S - static, R - RIP, M - mobile, B - BGP\n       D - EIGRP, EX - EIGRP external, O - OSPF, IA - OSPF inter area\n\nGateway of last resort is not set\n\nB        203.0.113.0/24 [20/200] via 172.16.2.2, 00:03:45, GigabitEthernet0/2',
+      },
+      {
+        command: 'show ip bgp 203.0.113.0',
+        aliases: [
+          'sh ip bgp 203.0.113.0/24',
+          'show ip bgp 203.0.113.0 255.255.255.0',
+          'verify bestpath',
+        ],
+        description: 'Inspect detailed BGP attribute comparison and tie-breaker decision',
+        output:
+          'BGP routing table entry for 203.0.113.0/24, version 3\nPaths: (2 available, best #2, table default)\n  Advertised to non-peer-group peers:\n    172.16.1.2 172.16.2.2\n  65100 65900\n    172.16.1.2 from 172.16.1.2 (198.51.100.1)\n      Origin IGP, metric 100, localpref 100, valid, external\n  65200\n    172.16.2.2 from 172.16.2.2 (198.51.100.2)\n      Origin IGP, metric 200, localpref 100, valid, external, best\n      Selection reason: Shorter AS-Path length (1 vs 2)',
+        goalAchieved: true,
+      },
+    ],
+  },
 };

@@ -18,6 +18,14 @@ import type {
   ProtocolFamily,
   DifficultyLevel,
 } from '../src/types/protocol-simulation.ts';
+import {
+  validateGeneratedSimulation,
+  normalizeProtocolFamily,
+  normalizeCertificationLevel,
+  normalizeDifficultyLevel,
+} from '../api/_lib/ai/simulation-validator.js';
+import { getActiveAiProvider, MockAiProvider, __setTestAiProvider } from '../api/_lib/ai/mock-provider.js';
+import { buildSimulationGenerationPrompt } from '../api/_lib/ai/prompt-builder.js';
 
 /**
  * NetMentor Protocol Explorer Engine Automated Test Suite
@@ -554,6 +562,212 @@ async function runProtocolSimulationTests() {
   }
 
   assert(totalCheckpoints >= 5, `Verified ${totalCheckpoints} total Socratic checkpoints across all simulation scenarios`);
+
+  // =========================================================================
+  // 6. Bounded In-App CLI Configuration & Command Execution
+  // =========================================================================
+  console.log('\n6. Testing Bounded CLI Configuration & In-App Execution Engine:');
+
+  const cliScenarios = [
+    OSPF_ADJACENCY_SCENARIO,
+    VLAN_TRUNKING_ROAS_SCENARIO,
+    BGP_BEST_PATH_SCENARIO,
+    ARP_MAC_LEARNING_SCENARIO,
+  ];
+
+  for (const sc of cliScenarios) {
+    const cli = sc.cliConfig;
+    assert(Boolean(cli), `Scenario ${sc.metadata.id} has defined cliConfig`);
+    if (!cli) continue;
+
+    assert(
+      ['OSPF', 'VLAN', 'BGP', 'ARP', 'TCP', 'GENERAL'].includes(cli.protocolScope),
+      `Scenario ${sc.metadata.id} has valid protocolScope: ${cli.protocolScope}`
+    );
+
+    const targetNode = sc.topology.nodes.find((n) => n.id === cli.targetNodeId);
+    assert(Boolean(targetNode), `Target node "${cli.targetNodeId}" exists in topology nodes`);
+
+    assert(Boolean(cli.promptHostname && cli.promptHostname.length >= 2), `Prompt hostname is defined: "${cli.promptHostname}"`);
+    assert(Boolean(cli.objective && cli.objective.length >= 20), `Objective is clearly defined: "${cli.objective.slice(0, 40)}..."`);
+    assert(Array.isArray(cli.initialConfigLines) && cli.initialConfigLines.length >= 2, `Initial config snippet has at least 2 lines`);
+    assert(Array.isArray(cli.allowedCommands) && cli.allowedCommands.length >= 3, `Allowed commands has at least 3 bounded commands`);
+
+    const hasGoalTrigger = cli.allowedCommands.some((c) => c.goalAchieved === true);
+    assert(hasGoalTrigger, `Scenario ${sc.metadata.id} provides at least 1 command with goalAchieved=true`);
+
+    for (const cmd of cli.allowedCommands) {
+      assert(Boolean(cmd.command && cmd.command.length >= 2), `Command definition "${cmd.command}" is non-empty`);
+      assert(Boolean(cmd.output && cmd.output.length >= 5), `Command "${cmd.command}" has deterministic output`);
+    }
+  }
+
+  // Test CLI execution logic on OSPF scenario
+  console.log('\n   6.1 CLI Interactive Execution Simulation (OSPF Adjacency):');
+  const ospfCli = OSPF_ADJACENCY_SCENARIO.cliConfig!;
+
+  function simulateCliExec(rawInput: string) {
+    const trimmed = rawInput.trim();
+    const normalized = trimmed.toLowerCase().replace(/\s+/g, ' ');
+
+    if (normalized === '?' || normalized === 'help') {
+      return { success: true, isHelp: true, output: 'Available Commands' };
+    }
+
+    const match = ospfCli.allowedCommands.find((c) => {
+      if (c.command.toLowerCase().trim().replace(/\s+/g, ' ') === normalized) return true;
+      if (c.aliases && c.aliases.some((a) => a.toLowerCase().trim().replace(/\s+/g, ' ') === normalized)) return true;
+      return false;
+    });
+
+    if (match) {
+      return {
+        success: true,
+        output: match.output,
+        goalAchieved: Boolean(match.goalAchieved),
+        tableMutations: match.tableMutations,
+      };
+    }
+
+    return {
+      success: false,
+      output: `% Invalid input detected: "${trimmed}"`,
+    };
+  }
+
+  const helpRes = simulateCliExec('?');
+  assert(helpRes.success && helpRes.isHelp, 'Executing "?" returns help output');
+
+  const invalidRes = simulateCliExec('shutdown everything now');
+  assert(!invalidRes.success && invalidRes.output.includes('% Invalid input'), 'Executing unpermitted command is safely rejected');
+
+  const diagRes = simulateCliExec('show ip ospf neighbor');
+  assert(diagRes.success && diagRes.output.includes('EXSTART'), 'Executing exact diagnostic command returns EXSTART output');
+
+  const aliasRes = simulateCliExec('sh ip ospf nei');
+  assert(aliasRes.success && aliasRes.output.includes('EXSTART'), 'Executing command alias (sh ip ospf nei) returns valid output');
+
+  const fixRes = simulateCliExec('ip mtu 1500');
+  assert(fixRes.success && fixRes.goalAchieved === true, 'Executing remediation command sets goalAchieved: true');
+  assert(Array.isArray(fixRes.tableMutations) && fixRes.tableMutations.length >= 2, 'Remediation command specifies tableMutations');
+
+  // Apply remediation mutation to test node
+  const testRouterNode: TopologyNode = {
+    id: 'router-2',
+    name: 'R2',
+    type: 'router',
+    interfaces: [],
+    tableState: {
+      ospfNeighbors: [{ neighborId: '1.1.1.1', priority: 1, state: 'EXSTART', address: '10.0.0.1', interface: 'Gi0/0' }],
+      routingTable: [],
+    },
+  };
+
+  for (const mut of fixRes.tableMutations!) {
+    if (mut.nodeId === 'router-2') {
+      applySingleMutation(testRouterNode, mut);
+    }
+  }
+
+  assert(testRouterNode.tableState.ospfNeighbors![0].state === 'FULL', 'OSPF neighbor state successfully transitioned to FULL via CLI mutation');
+
+  // =========================================================================
+  // 7. Multi-Provider AI Scenario Generation & Validator Invariants
+  // =========================================================================
+  console.log('\n7. Testing Multi-Provider AI Scenario Generator & Schema Validation:');
+
+  // 7.1 Schema validator reject paths
+  const emptyRes = validateGeneratedSimulation('');
+  assert(!emptyRes.valid && emptyRes.errors!.length > 0, 'Empty AI response is rejected by validator');
+
+  const junkRes = validateGeneratedSimulation('Random conversational LLM greeting without JSON');
+  assert(!junkRes.valid && junkRes.errors!.some((e) => e.includes('Malformed JSON') || e.includes('No valid JSON object')), 'Conversational non-JSON output is safely rejected');
+
+  const brokenJsonRes = validateGeneratedSimulation('{"metadata": {"title": "incomplete", "bad": true');
+  assert(!brokenJsonRes.valid && brokenJsonRes.errors!.some((e) => e.includes('Malformed JSON')), 'Malformed JSON syntax is safely caught');
+
+  const missingNodesRes = validateGeneratedSimulation(JSON.stringify({
+    metadata: { title: 'Test Scenario', protocol: 'OSPF' },
+    topology: { nodes: [{ id: 'n1', name: 'N1' }], links: [] },
+    steps: [{ stepIndex: 0, title: 'Step 1' }, { stepIndex: 1, title: 'Step 2' }],
+  }));
+  assert(!missingNodesRes.valid && missingNodesRes.errors!.some((e) => e.includes('at least 2 nodes')), 'Scenario with < 2 nodes rejected');
+
+  const missingStepsRes = validateGeneratedSimulation(JSON.stringify({
+    metadata: { title: 'Test Scenario', protocol: 'OSPF' },
+    topology: {
+      nodes: [{ id: 'n1', name: 'N1' }, { id: 'n2', name: 'N2' }],
+      links: [{ id: 'l1', sourceNodeId: 'n1', targetNodeId: 'n2' }],
+    },
+    steps: [],
+  }));
+  assert(!missingStepsRes.valid && missingStepsRes.errors!.some((e) => e.includes('at least 2 sequential steps')), 'Scenario with 0 steps rejected');
+
+  // 7.2 Prompt construction
+  const prompt = buildSimulationGenerationPrompt({
+    topic: 'BGP Local-Preference Traffic Engineering',
+    protocol: 'BGP',
+    certification: 'CCNP',
+    difficulty: 'Advanced',
+    faultScenario: 'Primary ISP peer lacks local-pref override',
+  });
+  assert(prompt.systemPrompt.includes('STRUCTURED PROTOCOL SIMULATION GENERATION MODE'), 'System prompt enforces structured simulation generation');
+  assert(prompt.userPrompt.includes('<simulation_request>'), 'User prompt contains simulation_request envelope');
+  assert(prompt.userPrompt.includes('BGP Local-Preference Traffic Engineering'), 'User prompt contains requested topic');
+
+  // 7.3 Multi-Provider mock execution & full scenario validation
+  __setTestAiProvider(new MockAiProvider());
+  const aiProvider = getActiveAiProvider();
+  const simResponse = await aiProvider.generateResponse({
+    systemPrompt: prompt.systemPrompt,
+    userPrompt: prompt.userPrompt,
+  });
+
+  assert(Boolean(simResponse.text && simResponse.text.length > 200), 'Active AI provider generated substantial response text');
+  assert(Boolean(simResponse.isSimulated), 'Response flagged as deterministic simulated generation in test harness');
+
+  const validRes = validateGeneratedSimulation(simResponse.text);
+  assert(validRes.valid === true && Boolean(validRes.scenario), 'Generated scenario passes full validation schema with 0 errors');
+
+  const genScenario = validRes.scenario!;
+  assert(genScenario.metadata.title.includes('BGP Local-Preference'), 'Generated scenario title matches requested topic');
+  assert(genScenario.metadata.protocol === 'BGP', 'Generated scenario protocol is BGP');
+  assert(genScenario.metadata.certification === 'CCNP', 'Generated scenario certification is CCNP');
+  assert(genScenario.topology.nodes.length >= 2, 'Generated scenario has at least 2 topology nodes');
+  assert(genScenario.topology.links.length >= 1, 'Generated scenario has at least 1 topology link');
+  assert(genScenario.steps.length >= 2, 'Generated scenario has at least 2 transmission steps');
+  assert(Boolean(genScenario.steps[0].transmission.packet.L2.srcMac), 'Step 0 packet has valid L2 srcMac');
+  assert(Boolean(genScenario.steps[0].transmission.packet.L3.srcIp), 'Step 0 packet has valid L3 srcIp');
+  assert(Boolean(genScenario.steps[0].transmission.packet.L4.protocolType), 'Step 0 packet has valid L4 protocolType');
+  assert(Boolean(genScenario.cliConfig), 'Generated scenario provides bounded CLI config');
+  assert(genScenario.cliConfig?.allowedCommands.some((c) => c.goalAchieved === true), 'Generated CLI config provides remediation command with goalAchieved=true');
+
+  // 7.4 Simulated error flags
+  try {
+    await aiProvider.generateResponse({
+      systemPrompt: 'STRUCTURED PROTOCOL SIMULATION GENERATION MODE',
+      userPrompt: 'TEST_PROVIDER_ERROR',
+    });
+    assert(false, 'TEST_PROVIDER_ERROR should have thrown');
+  } catch (err: any) {
+    assert(err?.message.includes('Simulated upstream AI provider failure'), 'TEST_PROVIDER_ERROR threw expected provider failure');
+  }
+
+  const badJsonSim = await aiProvider.generateResponse({
+    systemPrompt: 'STRUCTURED PROTOCOL SIMULATION GENERATION MODE',
+    userPrompt: 'TEST_INVALID_JSON',
+  });
+  const badJsonSimVal = validateGeneratedSimulation(badJsonSim.text);
+  assert(!badJsonSimVal.valid, 'TEST_INVALID_JSON simulation response safely caught as invalid');
+
+  const missingStepsSim = await aiProvider.generateResponse({
+    systemPrompt: 'STRUCTURED PROTOCOL SIMULATION GENERATION MODE',
+    userPrompt: 'TEST_MISSING_STEPS',
+  });
+  const missingStepsSimVal = validateGeneratedSimulation(missingStepsSim.text);
+  assert(!missingStepsSimVal.valid, 'TEST_MISSING_STEPS simulation response safely caught as invalid');
+
+  __setTestAiProvider(null);
 
   console.log('\n=============================================================');
   console.log(`✓ ALL ${passed} PROTOCOL SIMULATION CHECKS PASSED CLEANLY! (0 failures)`);

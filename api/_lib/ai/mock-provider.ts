@@ -220,6 +220,51 @@ export class MockAiProvider implements AiProviderClient {
       };
     }
 
+    // Handle Structured Protocol Simulation Generation Mode (Phase H)
+    if (
+      systemPrompt.includes('STRUCTURED PROTOCOL SIMULATION GENERATION MODE') ||
+      userPrompt.includes('<simulation_request>')
+    ) {
+      if (userPrompt.includes('TEST_PROVIDER_ERROR')) {
+        throw new Error('Simulated upstream AI provider failure');
+      }
+
+      if (userPrompt.includes('TEST_INVALID_JSON')) {
+        return {
+          text: '{"metadata": {"title": "Broken Simulation JSON", "nodes": [:::[{',
+          model: this.modelName,
+          isSimulated: true,
+          finishReason: 'stop',
+        };
+      }
+
+      if (userPrompt.includes('TEST_MISSING_STEPS')) {
+        return {
+          text: JSON.stringify({
+            metadata: { title: 'Missing Steps Scenario', protocol: 'OSPF' },
+            topology: { nodes: [{ id: 'n1' }], links: [] },
+            steps: [],
+          }),
+          model: this.modelName,
+          isSimulated: true,
+          finishReason: 'stop',
+        };
+      }
+
+      const simJson = generateMockStructuredSimulation(userPrompt);
+      return {
+        text: simJson,
+        model: this.modelName,
+        isSimulated: true,
+        finishReason: 'stop',
+        usage: {
+          promptTokens: 490,
+          completionTokens: 1100,
+          totalTokens: 1590,
+        },
+      };
+    }
+
     // Extract learner query from <learner_query>...</learner_query>
     const match = userPrompt.match(/<learner_query>\s*([\s\S]*?)\s*<\/learner_query>/i);
     const query = (match ? match[1] : userPrompt).toLowerCase();
@@ -894,6 +939,235 @@ function generateMockStructuredQuiz(userPrompt: string): string {
     lessonTitle,
     questions,
   }, null, 2);
+}
+
+/**
+ * Deterministically constructs a rich, technically accurate ProtocolSimulationScenario JSON object
+ * tailored to the requested networking topic and protocol for offline testing and local dev.
+ */
+function generateMockStructuredSimulation(userPrompt: string): string {
+  const topicMatch = userPrompt.match(/TOPIC:\s*([^\r\n]+)/i);
+  const protoMatch = userPrompt.match(/PROTOCOL:\s*([^\r\n]+)/i);
+  const certMatch = userPrompt.match(/CERTIFICATION:\s*([^\r\n]+)/i);
+  const diffMatch = userPrompt.match(/DIFFICULTY:\s*([^\r\n]+)/i);
+
+  const rawTopic = topicMatch ? topicMatch[1].trim() : 'OSPF Area ID Mismatch';
+  const protocol = protoMatch ? protoMatch[1].trim().toUpperCase() : 'OSPF';
+  const certification = certMatch ? certMatch[1].trim() : 'CCNA';
+  const difficulty = diffMatch ? diffMatch[1].trim() : 'Intermediate';
+
+  const slug = rawTopic.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 30);
+  const id = `ai-sim-${slug}`;
+
+  return JSON.stringify(
+    {
+      metadata: {
+        id,
+        title: rawTopic,
+        certification: certification === 'CCNP' ? 'CCNP' : 'CCNA',
+        protocol: protocol.includes('BGP')
+          ? 'BGP'
+          : protocol.includes('VLAN')
+          ? 'VLAN'
+          : protocol.includes('ARP')
+          ? 'ARP'
+          : protocol.includes('TCP')
+          ? 'TCP'
+          : 'OSPF',
+        difficulty:
+          difficulty === 'Advanced' ? 'Advanced' : difficulty === 'Beginner' ? 'Beginner' : 'Intermediate',
+        description: `Automated interactive simulation and Cisco IOS break-fix laboratory exploring ${rawTopic}.`,
+        keyConcepts: [
+          `${rawTopic} Protocol Wire Mechanics`,
+          'Header Encapsulation & State Transitions',
+          'Cisco IOS Verification & Remediation',
+        ],
+      },
+      topology: {
+        nodes: [
+          {
+            id: 'r1-hq',
+            name: 'R1-HQ',
+            type: 'router',
+            interfaces: [
+              {
+                name: 'Gi0/0',
+                ip: '10.10.10.1',
+                mac: '00:1A:2B:3C:4D:01',
+                subnetMask: '255.255.255.252',
+              },
+            ],
+            tableState: {
+              arpCache: [],
+              routingTable: [
+                { network: '10.10.10.0', mask: '255.255.255.252', interface: 'Gi0/0', protocol: 'C' },
+              ],
+              ospfNeighbors: [],
+              tcpState: 'CLOSED',
+            },
+            position: { x: 90, y: 150 },
+          },
+          {
+            id: 'r2-branch',
+            name: 'R2-Branch',
+            type: 'router',
+            interfaces: [
+              {
+                name: 'Gi0/0',
+                ip: '10.10.10.2',
+                mac: '00:1A:2B:3C:4D:02',
+                subnetMask: '255.255.255.252',
+              },
+            ],
+            tableState: {
+              arpCache: [],
+              routingTable: [
+                { network: '10.10.10.0', mask: '255.255.255.252', interface: 'Gi0/0', protocol: 'C' },
+              ],
+              ospfNeighbors: [],
+              tcpState: 'CLOSED',
+            },
+            position: { x: 380, y: 150 },
+          },
+        ],
+        links: [
+          {
+            id: 'link-1',
+            sourceNodeId: 'r1-hq',
+            targetNodeId: 'r2-branch',
+            linkSpeed: '1 Gbps',
+            label: 'Gi0/0 (10.10.10.0/30)',
+          },
+        ],
+      },
+      steps: [
+        {
+          stepIndex: 0,
+          title: `1. Diagnostic Transmission: Outbound ${protocol} Packet`,
+          explanation: `R1-HQ transmits initial ${protocol} packet to R2-Branch over link Gi0/0.`,
+          activeNodeId: 'r1-hq',
+          targetNodeId: 'r2-branch',
+          transmission: {
+            fromNodeId: 'r1-hq',
+            toNodeId: 'r2-branch',
+            packet: {
+              L2: {
+                srcMac: '00:1A:2B:3C:4D:01',
+                dstMac: '00:1A:2B:3C:4D:02',
+                ethertype: '0x0800 (IPv4)',
+              },
+              L3: {
+                srcIp: '10.10.10.1',
+                dstIp: '10.10.10.2',
+                protocol: protocol === 'OSPF' ? 'OSPF (89)' : protocol === 'BGP' ? 'TCP (6)' : 'IP',
+                ttl: 64,
+              },
+              L4: {
+                protocolType: protocol === 'OSPF' ? 'OSPF' : protocol === 'BGP' ? 'TCP' : 'ICMP',
+                srcPort: protocol === 'BGP' ? 179 : 1025,
+                dstPort: protocol === 'BGP' ? 179 : 80,
+                ospfType: protocol === 'OSPF' ? 'Hello' : undefined,
+              },
+              payloadDescription: `${protocol} diagnostic transmission on link Gi0/0`,
+            },
+          },
+          socraticCheckpoint: {
+            question: `What primary header parameter determines whether ${rawTopic} reaches established status?`,
+            hint: 'Examine Layer 3 and protocol-specific fields in the packet inspection ladder.',
+            expectedConcept: 'Matching subnet mask, timers, and area configurations are mandatory.',
+          },
+        },
+        {
+          stepIndex: 1,
+          title: `2. Response Evaluation: Neighbor State Validation`,
+          explanation: `R2-Branch evaluates incoming payload and updates internal protocol state machine.`,
+          activeNodeId: 'r2-branch',
+          targetNodeId: 'r1-hq',
+          transmission: {
+            fromNodeId: 'r2-branch',
+            toNodeId: 'r1-hq',
+            packet: {
+              L2: {
+                srcMac: '00:1A:2B:3C:4D:02',
+                dstMac: '00:1A:2B:3C:4D:01',
+                ethertype: '0x0800 (IPv4)',
+              },
+              L3: {
+                srcIp: '10.10.10.2',
+                dstIp: '10.10.10.1',
+                protocol: protocol === 'OSPF' ? 'OSPF (89)' : protocol === 'BGP' ? 'TCP (6)' : 'IP',
+                ttl: 64,
+              },
+              L4: {
+                protocolType: protocol === 'OSPF' ? 'OSPF' : protocol === 'BGP' ? 'TCP' : 'ICMP',
+                srcPort: protocol === 'BGP' ? 179 : 1026,
+                dstPort: protocol === 'BGP' ? 179 : 80,
+                ospfType: protocol === 'OSPF' ? 'DBD' : undefined,
+              },
+              payloadDescription: `${protocol} state acknowledgement and status exchange`,
+            },
+          },
+        },
+      ],
+      cliConfig: {
+        protocolScope: protocol.includes('BGP')
+          ? 'BGP'
+          : protocol.includes('VLAN')
+          ? 'VLAN'
+          : protocol.includes('ARP')
+          ? 'ARP'
+          : protocol.includes('TCP')
+          ? 'TCP'
+          : 'OSPF',
+        targetNodeId: 'r1-hq',
+        promptHostname: 'R1-HQ#',
+        objective: `Resolve the ${rawTopic} fault on R1-HQ to restore operational protocol state.`,
+        initialConfigLines: [
+          'interface GigabitEthernet0/0',
+          ' ip address 10.10.10.1 255.255.255.252',
+          ` ! Diagnostic state: ${rawTopic}`,
+        ],
+        allowedCommands: [
+          {
+            command: 'show running-config interface GigabitEthernet0/0',
+            aliases: ['sh run int gi0/0', 'sh run interface gi0/0', 'show run int gi0/0'],
+            description: 'Inspect current interface configuration',
+            output: 'interface GigabitEthernet0/0\n ip address 10.10.10.1 255.255.255.252',
+          },
+          {
+            command: 'show ip interface brief',
+            aliases: ['sh ip int br', 'sh ip int brief'],
+            description: 'Verify Layer 1 & 2 operational status',
+            output:
+              'Interface              IP-Address      OK? Method Status                Protocol\nGigabitEthernet0/0     10.10.10.1      YES manual up                    up',
+          },
+          {
+            command: 'remediate',
+            aliases: ['fix', 'remediate fault', 'solve', 'configure fix'],
+            description: 'Apply corrective configuration command for this fault',
+            output: `%NETMENTOR-5-REMEDIATED: Corrective configuration applied on R1-HQ.\n%PROTOCOL-5-STATE: ${protocol} state transitioned to OPERATIONAL.`,
+            tableMutations: [
+              {
+                nodeId: 'r1-hq',
+                table: 'routing',
+                action: 'add',
+                data: {
+                  network: '192.168.100.0',
+                  mask: '255.255.255.0',
+                  nextHop: '10.10.10.2',
+                  interface: 'Gi0/0',
+                  protocol: protocol === 'OSPF' ? 'O' : protocol === 'BGP' ? 'B' : 'S',
+                },
+              },
+            ],
+            goalAchieved: true,
+          },
+        ],
+      },
+    },
+    null,
+    2
+  );
 }
 
 

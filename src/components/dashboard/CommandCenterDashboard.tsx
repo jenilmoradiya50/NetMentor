@@ -11,6 +11,7 @@ import {
   ArrowRight,
   Terminal,
   Play,
+  Sparkles,
 } from 'lucide-react';
 
 export interface CommandCenterDashboardProps {
@@ -224,6 +225,46 @@ export const CommandCenterDashboard: React.FC<CommandCenterDashboardProps> = ({
               </Card>
             );
           })}
+
+          {/* 6th Card: AI Scenario Generator Hub */}
+          <Card
+            variant="interactive"
+            onClick={() => onNavigateToLabs()}
+            className="p-3 sm:p-3.5 flex flex-col justify-between space-y-2.5 hover:border-accent/60 transition-all border-dashed border-accent/40 bg-accent/5 group touch-target-44"
+          >
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-1.5">
+                <div className="flex items-center gap-1">
+                  <Badge variant="amber" size="sm">
+                    AI LABS
+                  </Badge>
+                  <Badge variant="blue" size="sm">
+                    MULTI-VENDOR
+                  </Badge>
+                </div>
+                <span className="text-[9px] font-mono text-accent uppercase font-bold">
+                  On-Demand
+                </span>
+              </div>
+
+              <h3 className="text-xs sm:text-sm font-bold text-white group-hover:text-accent transition-colors leading-snug flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-accent" />
+                <span>AI Scenario Generator</span>
+              </h3>
+
+              <p className="text-[11px] text-slate-400 line-clamp-1 leading-relaxed">
+                Generate custom multi-node topologies, wire flows &amp; Cisco IOS break-fix CLI challenges.
+              </p>
+            </div>
+
+            <div className="pt-2 border-t border-accent/20 flex items-center justify-between text-xs font-medium text-slate-300 group-hover:text-white">
+              <span className="flex items-center gap-1.5 text-accent font-mono text-[11px]">
+                <Sparkles className="w-3 h-3 text-accent animate-pulse" />
+                Launch Scenario Architect
+              </span>
+              <ArrowRight className="w-3.5 h-3.5 text-accent group-hover:translate-x-0.5 transition-all" />
+            </div>
+          </Card>
         </div>
       </section>
     </div>

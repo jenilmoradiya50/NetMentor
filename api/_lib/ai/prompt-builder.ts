@@ -717,4 +717,141 @@ export function buildQuizGenerationPrompt(params: BuildQuizGenerationPromptParam
   };
 }
 
+export interface BuildSimulationGenerationPromptParams {
+  topic: string;
+  certification?: string;
+  protocol?: string;
+  difficulty?: string;
+  faultScenario?: string;
+}
+
+/**
+ * Constructs structured prompts for generating interactive ProtocolSimulationScenario objects.
+ */
+export function buildSimulationGenerationPrompt(params: BuildSimulationGenerationPromptParams): {
+  systemPrompt: string;
+  userPrompt: string;
+} {
+  const systemPrompt = `You are NetMentor's Principal Network Architect and Protocol Simulation Engine.
+Your task is to generate an interactive, pedagogically rigorous ProtocolSimulationScenario JSON object for CCNA and CCNP students.
+
+STRUCTURED PROTOCOL SIMULATION GENERATION MODE:
+You must output a single, raw, valid JSON object strictly complying with the ProtocolSimulationScenario schema.
+Do NOT include markdown formatting or commentary outside the JSON. Start with { and end with }.
+
+Required JSON Schema:
+{
+  "metadata": {
+    "id": "kebab-case-unique-id",
+    "title": "Clear concise scenario title",
+    "certification": "CCNA" | "CCNP" | "Fundamentals",
+    "protocol": "TCP" | "ARP" | "OSPF" | "BGP" | "VLAN",
+    "difficulty": "Beginner" | "Intermediate" | "Advanced",
+    "description": "Comprehensive didactic walkthrough description",
+    "keyConcepts": ["Concept 1", "Concept 2", "Concept 3"]
+  },
+  "topology": {
+    "nodes": [
+      {
+        "id": "node-1",
+        "name": "R1 (HQ Router)",
+        "type": "router" | "switch" | "host",
+        "interfaces": [
+          { "name": "Gi0/0", "ip": "192.168.1.1", "mac": "00:1A:2B:3C:4D:01", "subnetMask": "255.255.255.0" }
+        ],
+        "tableState": { "arpCache": [], "routingTable": [], "ospfNeighbors": [] },
+        "position": { "x": 100, "y": 150 }
+      },
+      {
+        "id": "node-2",
+        "name": "R2 (Branch Router)",
+        "type": "router" | "switch" | "host",
+        "interfaces": [
+          { "name": "Gi0/0", "ip": "192.168.1.2", "mac": "00:1A:2B:3C:4D:02", "subnetMask": "255.255.255.0" }
+        ],
+        "tableState": { "arpCache": [], "routingTable": [], "ospfNeighbors": [] },
+        "position": { "x": 380, "y": 150 }
+      }
+    ],
+    "links": [
+      {
+        "id": "link-1",
+        "sourceNodeId": "node-1",
+        "targetNodeId": "node-2",
+        "linkSpeed": "1 Gbps",
+        "label": "Gi0/0 <-> Gi0/0"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "stepIndex": 0,
+      "title": "1. Transmission Title",
+      "explanation": "Detailed explanation of packet wire mechanics",
+      "activeNodeId": "node-1",
+      "targetNodeId": "node-2",
+      "transmission": {
+        "fromNodeId": "node-1",
+        "toNodeId": "node-2",
+        "packet": {
+          "L2": { "srcMac": "00:1A:2B:3C:4D:01", "dstMac": "00:1A:2B:3C:4D:02", "ethertype": "0x0800 (IPv4)" },
+          "L3": { "srcIp": "192.168.1.1", "dstIp": "192.168.1.2", "protocol": "OSPF (89)", "ttl": 1 },
+          "L4": { "protocolType": "OSPF", "ospfType": "Hello", "srcPort": 89, "dstPort": 89 },
+          "payloadDescription": "OSPF Hello packet exchange"
+        }
+      },
+      "socraticCheckpoint": {
+        "question": "Didactic question for student?",
+        "hint": "Actionable hint",
+        "expectedConcept": "Core concept"
+      }
+    }
+  ],
+  "cliConfig": {
+    "protocolScope": "OSPF" | "BGP" | "VLAN" | "ARP" | "TCP" | "GENERAL",
+    "targetNodeId": "node-1",
+    "promptHostname": "R1#",
+    "objective": "Concise break-fix or verification objective",
+    "initialConfigLines": ["interface GigabitEthernet0/0", " ip address 192.168.1.1 255.255.255.0"],
+    "allowedCommands": [
+      {
+        "command": "show running-config",
+        "aliases": ["sh run"],
+        "description": "Inspect running configuration",
+        "output": "interface GigabitEthernet0/0\\n ip address 192.168.1.1 255.255.255.0"
+      },
+      {
+        "command": "remediation-command",
+        "aliases": ["alias"],
+        "description": "Remediate fault",
+        "output": "%CONFIG-5-CHANGED: Interface configured successfully",
+        "goalAchieved": true
+      }
+    ]
+  }
+}`;
+
+  const cleanTopic = sanitizeUntrustedInput(params.topic, 150);
+  const userLines: string[] = [
+    '<simulation_request>',
+    `TOPIC: ${cleanTopic}`,
+    `CERTIFICATION: ${params.certification || 'CCNA'}`,
+    `PROTOCOL: ${params.protocol || 'OSPF'}`,
+    `DIFFICULTY: ${params.difficulty || 'Intermediate'}`,
+  ];
+
+  if (params.faultScenario) {
+    userLines.push(`FAULT_SCENARIO: ${sanitizeUntrustedInput(params.faultScenario, 250)}`);
+  }
+
+  userLines.push('</simulation_request>');
+  userLines.push('');
+  userLines.push('Generate a complete ProtocolSimulationScenario JSON matching this request now. Output pure valid JSON only.');
+
+  return {
+    systemPrompt,
+    userPrompt: userLines.join('\n'),
+  };
+}
+
 

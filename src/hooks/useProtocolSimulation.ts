@@ -11,6 +11,12 @@ import type {
 
 const BASE_INTERVAL_MS = 2500;
 
+export interface CliLogEntry {
+  id: string;
+  type: 'input' | 'output' | 'system' | 'error';
+  text: string;
+}
+
 export interface UseProtocolSimulationResult {
   // Core state
   scenario: ProtocolSimulationScenario;
@@ -30,6 +36,14 @@ export interface UseProtocolSimulationResult {
   isAtStart: boolean;
   isAtEnd: boolean;
   progressPercentage: number;
+
+  // In-App Bounded CLI State & Actions
+  cliHistory: CliLogEntry[];
+  promptHostname: string;
+  isObjectiveSolved: boolean;
+  cliMutations: NodeStateMutation[];
+  executeCliCommand: (rawInput: string) => { success: boolean; output: string; goalAchieved?: boolean };
+  resetCli: () => void;
 
   // Actions
   play: () => void;
@@ -204,6 +218,43 @@ export function applySingleMutation(node: TopologyNode, mutation: NodeStateMutat
   }
 }
 
+function createInitialCliHistory(scenario: ProtocolSimulationScenario): CliLogEntry[] {
+  if (!scenario.cliConfig) {
+    return [
+      {
+        id: 'init-0',
+        type: 'system',
+        text: `NetMentor Interactive Console [Session: ${scenario.metadata.protocol}]\nType '?' or 'help' for available diagnostic commands.`,
+      },
+    ];
+  }
+
+  const { promptHostname, protocolScope, objective, initialConfigLines } = scenario.cliConfig;
+  const lines: CliLogEntry[] = [
+    {
+      id: 'init-0',
+      type: 'system',
+      text: `NetMentor Industrial Telecom Console - Protocol Lab Shell\nActive Node: ${scenario.cliConfig.targetNodeId} | Protocol: ${protocolScope}\nObjective: ${objective}`,
+    },
+  ];
+
+  if (initialConfigLines && initialConfigLines.length > 0) {
+    lines.push({
+      id: 'init-1',
+      type: 'output',
+      text: `--- Current Running Configuration (${promptHostname.replace(/[#>]*/g, '')}) ---\n${initialConfigLines.join('\n')}`,
+    });
+  }
+
+  lines.push({
+    id: 'init-2',
+    type: 'system',
+    text: `Type '?' or 'help' to view permitted commands for this scenario.`,
+  });
+
+  return lines;
+}
+
 /**
  * Primary step playback controller hook for the NetMentor Protocol Explorer Engine.
  */
@@ -217,11 +268,25 @@ export function useProtocolSimulation(
   const [inspectedLayer, setInspectedLayer] = useState<InspectedLayer>('L4');
   const [activeInspectorTab, setActiveInspectorTab] = useState<InspectorTab>('headers');
 
+  // In-App Bounded CLI State
+  const [promptHostname, setPromptHostname] = useState<string>(
+    initialScenario.cliConfig?.promptHostname || 'Router#'
+  );
+  const [cliMutations, setCliMutations] = useState<NodeStateMutation[]>([]);
+  const [isObjectiveSolved, setIsObjectiveSolved] = useState<boolean>(false);
+  const [cliHistory, setCliHistory] = useState<CliLogEntry[]>(() =>
+    createInitialCliHistory(initialScenario)
+  );
+
   // Sync state if scenario changes externally
   useEffect(() => {
     setScenarioState(initialScenario);
     setCurrentStepIndex(0);
     setIsPlaying(false);
+    setPromptHostname(initialScenario.cliConfig?.promptHostname || 'Router#');
+    setCliMutations([]);
+    setIsObjectiveSolved(false);
+    setCliHistory(createInitialCliHistory(initialScenario));
   }, [initialScenario.metadata.id]);
 
   const totalSteps = scenario.steps.length;
@@ -234,18 +299,33 @@ export function useProtocolSimulation(
     return Math.round((currentStepIndex / (totalSteps - 1)) * 100);
   }, [currentStepIndex, totalSteps]);
 
-  // Compute accumulated topology state for the current step
+  // Compute accumulated topology state for the current step + any interactive CLI mutations
   const computedTopology = useMemo(() => {
     const nodes = computeAccumulatedTopology(
       scenario.topology.nodes,
       scenario.steps,
       currentStepIndex
     );
+
+    // Apply any interactive mutations executed via the CLI
+    if (cliMutations.length > 0) {
+      const nodeMap = new Map<string, TopologyNode>();
+      for (const node of nodes) {
+        nodeMap.set(node.id, node);
+      }
+      for (const mut of cliMutations) {
+        const targetNode = nodeMap.get(mut.nodeId);
+        if (targetNode) {
+          applySingleMutation(targetNode, mut);
+        }
+      }
+    }
+
     return {
       nodes,
       links: scenario.topology.links,
     };
-  }, [scenario, currentStepIndex]);
+  }, [scenario, currentStepIndex, cliMutations]);
 
   // Automated playback timer
   useEffect(() => {
@@ -316,7 +396,116 @@ export function useProtocolSimulation(
     setScenarioState(newScenario);
     setCurrentStepIndex(0);
     setIsPlaying(false);
+    setPromptHostname(newScenario.cliConfig?.promptHostname || 'Router#');
+    setCliMutations([]);
+    setIsObjectiveSolved(false);
+    setCliHistory(createInitialCliHistory(newScenario));
   }, []);
+
+  const resetCli = useCallback(() => {
+    setCliMutations([]);
+    setIsObjectiveSolved(false);
+    setPromptHostname(scenario.cliConfig?.promptHostname || 'Router#');
+    setCliHistory(createInitialCliHistory(scenario));
+  }, [scenario]);
+
+  const executeCliCommand = useCallback(
+    (rawInput: string): { success: boolean; output: string; goalAchieved?: boolean } => {
+      const trimmed = rawInput.trim();
+      if (!trimmed) {
+        return { success: true, output: '' };
+      }
+
+      const inputEntry: CliLogEntry = {
+        id: `cli-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        type: 'input',
+        text: `${promptHostname} ${trimmed}`,
+      };
+
+      const normalized = trimmed.toLowerCase().replace(/\s+/g, ' ');
+
+      // 1. Check for help / ?
+      if (normalized === '?' || normalized === 'help') {
+        const allowed = scenario.cliConfig?.allowedCommands || [];
+        const cmdList =
+          allowed.length > 0
+            ? allowed
+                .map(
+                  (c) =>
+                    `  ${c.command.padEnd(35)} - ${c.description || 'Inspection/Action command'}`
+                )
+                .join('\n')
+            : '  (No bounded commands registered for this scenario)';
+
+        const helpText = `Available ${scenario.cliConfig?.protocolScope || 'Protocol'} Commands:\n${cmdList}\n\nType 'help' or '?' anytime. Commands are case-insensitive and support standard abbreviations.`;
+
+        const outEntry: CliLogEntry = {
+          id: `cli-out-${Date.now()}`,
+          type: 'output',
+          text: helpText,
+        };
+
+        setCliHistory((prev) => [...prev, inputEntry, outEntry]);
+        return { success: true, output: helpText };
+      }
+
+      // 2. Match against scenario's allowedCommands
+      const allowedCommands = scenario.cliConfig?.allowedCommands || [];
+      const match = allowedCommands.find((def) => {
+        const canonical = def.command.toLowerCase().trim().replace(/\s+/g, ' ');
+        if (normalized === canonical) return true;
+        if (
+          def.aliases &&
+          def.aliases.some((a) => a.toLowerCase().trim().replace(/\s+/g, ' ') === normalized)
+        ) {
+          return true;
+        }
+        return false;
+      });
+
+      if (match) {
+        const outEntry: CliLogEntry = {
+          id: `cli-out-${Date.now()}`,
+          type: 'output',
+          text: match.output,
+        };
+
+        const newEntries = [inputEntry, outEntry];
+
+        if (match.tableMutations && match.tableMutations.length > 0) {
+          setCliMutations((prev) => [...prev, ...(match.tableMutations || [])]);
+        }
+
+        if (match.goalAchieved) {
+          setIsObjectiveSolved(true);
+          newEntries.push({
+            id: `cli-sys-${Date.now()}`,
+            type: 'system',
+            text: `[OBJECTIVE VERIFIED] ${scenario.cliConfig?.objective || 'Scenario goal successfully accomplished!'}`,
+          });
+        }
+
+        if (match.nextPromptHostname) {
+          setPromptHostname(match.nextPromptHostname);
+        }
+
+        setCliHistory((prev) => [...prev, ...newEntries]);
+        return { success: true, output: match.output, goalAchieved: match.goalAchieved };
+      }
+
+      // 3. Command not recognized
+      const errorMsg = `% Invalid input detected: "${trimmed}"\nType '?' or 'help' to inspect valid topic-bounded commands for ${scenario.cliConfig?.protocolScope || 'this scenario'}.`;
+      const errEntry: CliLogEntry = {
+        id: `cli-err-${Date.now()}`,
+        type: 'error',
+        text: errorMsg,
+      };
+
+      setCliHistory((prev) => [...prev, inputEntry, errEntry]);
+      return { success: false, output: errorMsg };
+    },
+    [promptHostname, scenario]
+  );
 
   return {
     scenario,
@@ -331,6 +520,12 @@ export function useProtocolSimulation(
     isAtStart,
     isAtEnd,
     progressPercentage,
+    cliHistory,
+    promptHostname,
+    isObjectiveSolved,
+    cliMutations,
+    executeCliCommand,
+    resetCli,
     play,
     pause,
     togglePlay,

@@ -456,4 +456,71 @@ export const VLAN_TRUNKING_ROAS_SCENARIO: ProtocolSimulationScenario = {
       ],
     },
   ],
+  cliConfig: {
+    protocolScope: 'VLAN',
+    targetNodeId: 'switch-1',
+    promptHostname: 'SW-1#',
+    objective:
+      'Verify 802.1Q trunking on Gi0/1 and test inter-VLAN forwarding connectivity from PC-Sales to PC-Eng.',
+    initialConfigLines: [
+      'interface GigabitEthernet0/1',
+      ' switchport trunk encapsulation dot1q',
+      ' switchport mode trunk',
+      ' switchport trunk allowed vlan 10,20',
+      'interface FastEthernet0/1',
+      ' switchport access vlan 10',
+      ' switchport mode access',
+      'interface FastEthernet0/2',
+      ' switchport access vlan 20',
+      ' switchport mode access',
+    ],
+    allowedCommands: [
+      {
+        command: 'show interfaces trunk',
+        aliases: ['sh int trunk', 'sh interfaces trunk', 'show int trunk'],
+        description: 'Display 802.1Q trunk status and allowed VLANs',
+        output:
+          'Port        Mode             Encapsulation  Status        Native vlan\nGi0/1       on               802.1q         trunking      1\n\nPort        Vlans allowed on trunk\nGi0/1       10,20\n\nPort        Vlans allowed and active in management domain\nGi0/1       10,20\n\nPort        Vlans in spanning tree forwarding state and not pruned\nGi0/1       10,20',
+      },
+      {
+        command: 'show vlan brief',
+        aliases: ['sh vlan brief', 'sh vlan br', 'show vlan br'],
+        description: 'Display configured VLANs and access port assignments',
+        output:
+          'VLAN Name                             Status    Ports\n---- -------------------------------- --------- -------------------------------\n1    default                          active    Fa0/3, Fa0/4\n10   Sales                            active    Fa0/1\n20   Engineering                      active    Fa0/2',
+      },
+      {
+        command: 'show mac address-table',
+        aliases: ['sh mac address-table', 'sh mac add', 'show mac add'],
+        description: 'Display switch CAM table with learned MACs and VLAN tags',
+        output:
+          '          Mac Address Table\n-------------------------------------------\nVlan    Mac Address       Type        Ports\n----    -----------       --------    -----\n  10    001a.2b3c.4d10    DYNAMIC     Fa0/1\n  20    001a.2b3c.4d20    DYNAMIC     Fa0/2\n  10    001a.2b3c.4dr1    DYNAMIC     Gi0/1\n  20    001a.2b3c.4dr2    DYNAMIC     Gi0/1\nTotal Mac Addresses for this criterion: 4',
+      },
+      {
+        command: 'ping 192.168.20.20',
+        aliases: [
+          'ping 192.168.20.20 source 192.168.10.10',
+          'ping 192.168.10.1',
+          'test inter-vlan',
+        ],
+        description: 'Execute end-to-end ICMP ping across Router-on-a-Stick sub-interfaces',
+        output:
+          'Type escape sequence to abort.\nSending 5, 100-byte ICMP Echos to 192.168.20.20, timeout is 2 seconds:\n.!!!!\nSuccess rate is 80 percent (4/5), round-trip min/avg/max = 1/2/4 ms\n%NETMENTOR-6-ROAS_VERIFIED: Inter-VLAN frame tagged dot1q VLAN 10 -> R1 -> retagged dot1q VLAN 20 -> delivered.',
+        tableMutations: [
+          {
+            nodeId: 'switch-1',
+            table: 'mac',
+            action: 'add',
+            data: {
+              mac: '00:1A:2B:3C:4D:20',
+              port: 'Fa0/2',
+              vlan: 20,
+              type: 'DYNAMIC',
+            },
+          },
+        ],
+        goalAchieved: true,
+      },
+    ],
+  },
 };
