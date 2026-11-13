@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Card, Badge, Button } from '../../ui';
 import type { CliLogEntry, CliMode } from '../../../hooks/useProtocolSimulation';
-import type { ScenarioCliConfig } from '../../../types/protocol-simulation';
+import type { ScenarioCliConfig, TopologyNode } from '../../../types/protocol-simulation';
 import {
   Terminal,
   CheckCircle2,
@@ -11,6 +11,7 @@ import {
   Play,
   Check,
   AlertCircle,
+  Cpu,
 } from 'lucide-react';
 
 export interface ProtocolCliConsoleProps {
@@ -24,6 +25,12 @@ export interface ProtocolCliConsoleProps {
   onExecuteCommand: (command: string) => { success: boolean; output: string; goalAchieved?: boolean };
   onResetCli: () => void;
   className?: string;
+
+  // Multi-Node Props (Phase K)
+  activeCliNodeId?: string;
+  nodes?: TopologyNode[];
+  targetNodeId?: string;
+  onSelectCliNode?: (nodeId: string) => void;
 }
 
 export const ProtocolCliConsole: React.FC<ProtocolCliConsoleProps> = ({
@@ -37,6 +44,10 @@ export const ProtocolCliConsole: React.FC<ProtocolCliConsoleProps> = ({
   onExecuteCommand,
   onResetCli,
   className = '',
+  activeCliNodeId,
+  nodes,
+  targetNodeId = cliConfig?.targetNodeId,
+  onSelectCliNode,
 }) => {
   const [inputVal, setInputVal] = useState<string>('');
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
@@ -45,7 +56,9 @@ export const ProtocolCliConsole: React.FC<ProtocolCliConsoleProps> = ({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const displayPrompt = activePrompt || promptHostname;
-
+  const isTarget = Boolean(
+    targetNodeId ? (activeCliNodeId ? activeCliNodeId === targetNodeId : true) : true
+  );
 
   // Auto-scroll terminal log to bottom on new entries
   useEffect(() => {
@@ -93,10 +106,20 @@ export const ProtocolCliConsole: React.FC<ProtocolCliConsoleProps> = ({
   };
 
   // Quick chips: available commands or common abbreviations + authentic mode transitions
-  const scenarioCommands = cliConfig?.allowedCommands?.map((c) => c.command) || [
-    'show running-config',
+  const inspectionCommands = [
+    'show ip interface brief',
     'show ip route',
+    'show arp',
+    'show mac address-table',
+    'show ip ospf neighbor',
   ];
+
+  const scenarioCommands = isTarget
+    ? cliConfig?.allowedCommands?.map((c) => c.command) || [
+        'show running-config',
+        'show ip route',
+      ]
+    : inspectionCommands;
 
   let modeNavCommands: string[] = [];
   if (cliMode === 'privileged') {
@@ -136,6 +159,15 @@ export const ProtocolCliConsole: React.FC<ProtocolCliConsoleProps> = ({
               ) : (
                 <Badge variant="amber" size="sm">
                   EXEC
+                </Badge>
+              )}
+              {isTarget ? (
+                <Badge variant="amber" size="sm">
+                  TARGET DEVICE
+                </Badge>
+              ) : (
+                <Badge variant="blue" size="sm">
+                  INSPECTION NODE
                 </Badge>
               )}
               {cliConfig?.protocolScope && (
@@ -186,6 +218,41 @@ export const ProtocolCliConsole: React.FC<ProtocolCliConsoleProps> = ({
           </Button>
         </div>
       </div>
+
+      {/* Multi-Node CLI Device Switcher */}
+      {nodes && nodes.length > 1 && (
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-0.5 border-b border-border-hairline/60">
+          <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400 whitespace-nowrap flex items-center gap-1">
+            <Cpu className="w-3 h-3 text-accent" /> Device:
+          </span>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {nodes.map((node) => {
+              const isSelected = node.id === (activeCliNodeId || targetNodeId);
+              const isNodeTarget = node.id === targetNodeId;
+              return (
+                <button
+                  key={node.id}
+                  type="button"
+                  onClick={() => onSelectCliNode?.(node.id)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-mono font-medium transition-all flex items-center gap-1.5 touch-target-44 min-h-[32px] ${
+                    isSelected
+                      ? 'bg-accent/20 text-accent border border-accent/40 shadow-sm font-bold'
+                      : 'bg-surface border border-border-hairline text-slate-400 hover:text-white hover:border-slate-600'
+                  }`}
+                  title={isNodeTarget ? `${node.name} (Break-Fix Target Node)` : `${node.name} (Inspection Node)`}
+                >
+                  <span>{node.name}</span>
+                  {isNodeTarget ? (
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400" title="Target Node" />
+                  ) : (
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400/60" title="Inspection Node" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Lab Objective Banner */}
       {cliConfig?.objective && (

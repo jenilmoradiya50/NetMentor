@@ -12,6 +12,7 @@ import {
   extractBaseHostname,
   formatCliPrompt,
   evaluateCliNavigation,
+  synthesizeLiveShowCommand,
 } from '../src/hooks/useProtocolSimulation.ts';
 import {
   parseAppRoute,
@@ -1131,6 +1132,185 @@ async function runProtocolSimulationTests() {
     buildAppUrl({ tab: 'curriculum', lessonId: 'bgp-overview' }) === '/curriculum?lesson=bgp-overview',
     'buildAppUrl preserves lessonId in query params'
   );
+
+  // =========================================================================
+  // SECTION 10: Phase K — Interactive Multi-Node CLI & Live Show Verification
+  // =========================================================================
+  console.log('\n--- Section 10: Interactive Multi-Node CLI & Live Show Verification ---');
+
+  // 10.1 Multi-Node Hostname & Prompt Derivation
+  console.log('   Testing Multi-Node Prompt Derivation across Device Types:');
+  assert(formatCliPrompt('R1', 'privileged', 'config-if', false) === 'R1#', 'Router node derives privileged # prompt');
+  assert(formatCliPrompt('R2', 'privileged', 'config-if', false) === 'R2#', 'Neighbor router derives privileged # prompt');
+  assert(formatCliPrompt('SW-1', 'privileged', 'config-if', false) === 'SW-1#', 'Switch node derives privileged # prompt');
+  assert(formatCliPrompt('PC-Sales', 'privileged', 'config-if', true) === 'PC-Sales>', 'Host node derives user > prompt');
+  assert(formatCliPrompt('PC-Sales', 'config', 'config-if', true) === 'PC-Sales(config)#', 'Host node in config mode uses config prompt');
+
+  // 10.2 Dynamic Show IP Interface Brief Synthesis
+  console.log('   Testing Dynamic "show ip interface brief" Synthesis:');
+  const mockRouterNode: TopologyNode = {
+    id: 'r1-edge',
+    name: 'R1-Edge',
+    type: 'router',
+    interfaces: [
+      { name: 'GigabitEthernet0/0', ip: '192.168.1.1', mac: '00:1A:2B:3C:4D:01' },
+      { name: 'GigabitEthernet0/1', mac: '00:1A:2B:3C:4D:02' },
+    ],
+    tableState: {},
+  };
+
+  const shIntBr = synthesizeLiveShowCommand('show ip interface brief', mockRouterNode);
+  assert(shIntBr !== null, 'show ip interface brief returns formatted output');
+  assert(Boolean(shIntBr?.includes('Interface                  IP-Address')), 'Output contains standard Cisco header');
+  assert(Boolean(shIntBr?.includes('GigabitEthernet0/0         192.168.1.1')), 'Lists assigned IP address on Gi0/0');
+  assert(Boolean(shIntBr?.includes('GigabitEthernet0/1         unassigned')), 'Lists unassigned status on Gi0/1');
+
+  // Alias verification
+  const shIntBrAlias = synthesizeLiveShowCommand('sh ip int br', mockRouterNode);
+  assert(shIntBrAlias !== null && shIntBrAlias === shIntBr, 'sh ip int br alias produces identical output');
+
+  // Node with no interfaces
+  const noIfNode: TopologyNode = { id: 'empty-1', name: 'Empty', type: 'router', interfaces: [], tableState: {} };
+  const emptyIfOut = synthesizeLiveShowCommand('show ip int brief', noIfNode);
+  assert(Boolean(emptyIfOut?.includes('No physical or virtual interfaces')), 'Empty interface list handled gracefully');
+
+  // 10.3 Dynamic Show IP Route Synthesis
+  console.log('   Testing Dynamic "show ip route" Synthesis:');
+  const routedNode: TopologyNode = {
+    id: 'r1-core',
+    name: 'R1-Core',
+    type: 'router',
+    interfaces: [{ name: 'Gi0/0', ip: '10.0.0.1', mac: '00:11:22:33:44:55' }],
+    tableState: {
+      routingTable: [
+        { network: '10.0.0.0', mask: '255.255.255.252', interface: 'Gi0/0', protocol: 'C' },
+        { network: '192.168.1.0', mask: '255.255.255.0', nextHop: '10.0.0.2', interface: 'Gi0/0', protocol: 'O', metric: 11, adminDistance: 110 },
+        { network: '203.0.113.0', mask: '255.255.255.0', nextHop: '172.16.2.2', interface: 'Gi0/2', protocol: 'B', metric: 200, adminDistance: 20 },
+      ],
+    },
+  };
+
+  const routeOut = synthesizeLiveShowCommand('show ip route', routedNode);
+  assert(routeOut !== null, 'show ip route returns table output');
+  assert(Boolean(routeOut?.includes('Gateway of last resort is not set')), 'Includes gateway notice');
+  assert(Boolean(routeOut?.includes('10.0.0.0')), 'Includes connected route');
+  assert(Boolean(routeOut?.includes('O        192.168.1.0/24 [110/11] via 10.0.0.2, Gi0/0')), 'Includes OSPF route with AD/metric');
+  assert(Boolean(routeOut?.includes('B        203.0.113.0/24 [20/200] via 172.16.2.2, Gi0/2')), 'Includes BGP route with AD/metric');
+
+  // Alias verification
+  const routeAlias = synthesizeLiveShowCommand('sh ip ro', routedNode);
+  assert(routeAlias !== null && routeAlias === routeOut, 'sh ip ro alias produces identical output');
+
+  // Node with empty routing table synthesizes connected routes from interfaces
+  const defaultRouteNode: TopologyNode = {
+    id: 'r-conn',
+    name: 'R-Conn',
+    type: 'router',
+    interfaces: [{ name: 'Gi0/0', ip: '172.16.1.1', mac: 'AA:BB:CC:DD:EE:01' }],
+    tableState: { routingTable: [] },
+  };
+  const synthesizedConn = synthesizeLiveShowCommand('show ip route', defaultRouteNode);
+  assert(Boolean(synthesizedConn?.includes('C        172.16.1.0/24 is directly connected, Gi0/0')), 'Synthesizes connected subnet from interface IP');
+
+  // 10.4 Dynamic Show ARP Synthesis
+  console.log('   Testing Dynamic "show arp" Synthesis:');
+  const arpNode: TopologyNode = {
+    id: 'sw-core',
+    name: 'SW-Core',
+    type: 'switch',
+    interfaces: [{ name: 'Vlan1', ip: '192.168.1.2', mac: '00:AA:BB:CC:DD:02' }],
+    tableState: {
+      arpCache: [
+        { ip: '192.168.1.1', mac: '00:1A:2B:3C:4D:01', interface: 'Vlan1' },
+        { ip: '192.168.1.100', mac: '00:1A:2B:3C:4D:99', interface: 'Vlan1' },
+      ],
+    },
+  };
+  const arpOut = synthesizeLiveShowCommand('show arp', arpNode);
+  assert(arpOut !== null, 'show arp returns formatted table');
+  assert(Boolean(arpOut?.includes('Protocol  Address          Age (min)  Hardware Addr   Type   Interface')), 'ARP table has standard Cisco columns');
+  assert(Boolean(arpOut?.includes('192.168.1.1')), 'Lists target IP 192.168.1.1');
+  assert(Boolean(arpOut?.includes('00:1A:2B:3C:4D:01')), 'Lists MAC for target IP');
+
+  // arp -a alias
+  const arpAlias = synthesizeLiveShowCommand('arp -a', arpNode);
+  assert(arpAlias !== null && arpAlias === arpOut, 'arp -a alias produces identical output');
+
+  // Empty ARP cache
+  const emptyArpNode: TopologyNode = { id: 'empty-arp', name: 'EA', type: 'router', interfaces: [], tableState: {} };
+  const emptyArpOut = synthesizeLiveShowCommand('show arp', emptyArpNode);
+  assert(Boolean(emptyArpOut?.includes('(ARP cache is empty)')), 'Empty ARP cache outputs explicit notice');
+
+  // 10.5 Dynamic Show MAC Address-Table Synthesis
+  console.log('   Testing Dynamic "show mac address-table" Synthesis:');
+  const macNode: TopologyNode = {
+    id: 'sw-1',
+    name: 'SW-1',
+    type: 'switch',
+    interfaces: [],
+    tableState: {
+      macTable: [
+        { vlan: 10, mac: '00:1A:2B:3C:4D:10', port: 'Fa0/1', type: 'DYNAMIC' },
+        { vlan: 20, mac: '00:1A:2B:3C:4D:20', port: 'Fa0/2', type: 'DYNAMIC' },
+      ],
+    },
+  };
+  const macOut = synthesizeLiveShowCommand('show mac address-table', macNode);
+  assert(macOut !== null, 'show mac address-table returns CAM table');
+  assert(Boolean(macOut?.includes('Mac Address Table')), 'Has standard header');
+  assert(Boolean(macOut?.includes('10      00:1A:2B:3C:4D:10 DYNAMIC     Fa0/1')), 'Renders VLAN 10 entry');
+  assert(Boolean(macOut?.includes('20      00:1A:2B:3C:4D:20 DYNAMIC     Fa0/2')), 'Renders VLAN 20 entry');
+  assert(Boolean(macOut?.includes('Total Mac Addresses for this criterion: 2')), 'Renders total count of 2 entries');
+
+  // Alias
+  const macAlias = synthesizeLiveShowCommand('sh mac-address-table', macNode);
+  assert(macAlias !== null && macAlias === macOut, 'sh mac-address-table alias produces identical output');
+
+  // Empty CAM table
+  const emptyMacNode: TopologyNode = { id: 'empty-mac', name: 'EM', type: 'switch', interfaces: [], tableState: {} };
+  const emptyMacOut = synthesizeLiveShowCommand('show mac address-table', emptyMacNode);
+  assert(Boolean(emptyMacOut?.includes('Total Mac Addresses for this criterion: 0')), 'Empty CAM table reports total 0');
+
+  // 10.6 Dynamic Show IP OSPF Neighbor Synthesis
+  console.log('   Testing Dynamic "show ip ospf neighbor" Synthesis:');
+  const ospfNode: TopologyNode = {
+    id: 'router-1',
+    name: 'R1',
+    type: 'router',
+    interfaces: [],
+    tableState: {
+      ospfNeighbors: [
+        { neighborId: '2.2.2.2', priority: 1, state: 'FULL', address: '10.0.0.2', interface: 'Gi0/0' },
+      ],
+    },
+  };
+  const ospfOut = synthesizeLiveShowCommand('show ip ospf neighbor', ospfNode);
+  assert(ospfOut !== null, 'show ip ospf neighbor returns neighbor table');
+  assert(Boolean(ospfOut?.includes('Neighbor ID     Pri   State           Dead Time   Address         Interface')), 'OSPF neighbor table header present');
+  assert(Boolean(ospfOut?.includes('2.2.2.2')), 'Lists neighbor RID 2.2.2.2');
+  assert(Boolean(ospfOut?.includes('FULL')), 'Lists FULL adjacency state');
+
+  const ospfAlias = synthesizeLiveShowCommand('sh ip ospf nei', ospfNode);
+  assert(ospfAlias !== null && ospfAlias === ospfOut, 'sh ip ospf nei alias produces identical output');
+
+  const emptyOspfNode: TopologyNode = { id: 'empty-ospf', name: 'EO', type: 'router', interfaces: [], tableState: {} };
+  const emptyOspfOut = synthesizeLiveShowCommand('show ip ospf neighbor', emptyOspfNode);
+  assert(Boolean(emptyOspfOut?.includes('(No active OSPF neighbors discovered)')), 'Empty OSPF table reports notice');
+
+  // 10.7 Dynamic Show Running-Config & Show Version
+  console.log('   Testing Dynamic "show running-config" & "show version" Synthesis:');
+  const runCfgOut = synthesizeLiveShowCommand('show running-config', mockRouterNode);
+  assert(Boolean(runCfgOut?.includes('hostname R1-Edge')), 'Running config includes node hostname');
+  assert(Boolean(runCfgOut?.includes('interface GigabitEthernet0/0')), 'Running config includes interface Gi0/0');
+  assert(Boolean(runCfgOut?.includes('ip address 192.168.1.1 255.255.255.0')), 'Running config includes IP address');
+
+  const verOut = synthesizeLiveShowCommand('show version', mockRouterNode);
+  assert(Boolean(verOut?.includes('Cisco IOS Software')), 'Show version includes Cisco IOS header');
+  assert(Boolean(verOut?.includes('R1-Edge uptime is')), 'Show version references device name');
+
+  // Unknown command returns null
+  assert(synthesizeLiveShowCommand('reload', mockRouterNode) === null, 'Unsupported action command returns null');
+  assert(synthesizeLiveShowCommand('ping 8.8.8.8', mockRouterNode) === null, 'Ping returns null to allow fallback');
 
 
   console.log('\n=============================================================');

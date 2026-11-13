@@ -59,6 +59,8 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
     cliMode,
     cliSubModeLabel,
     isObjectiveSolved,
+    activeCliNodeId,
+    setActiveCliNodeId,
     executeCliCommand,
     resetCli,
     play,
@@ -289,7 +291,10 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
         activeStep={currentStep}
         isPlaying={isPlaying}
         selectedNodeId={selectedNodeId}
-        onSelectNode={setSelectedNodeId}
+        onSelectNode={(nodeId) => {
+          setSelectedNodeId(nodeId);
+          setActiveCliNodeId(nodeId);
+        }}
       />
 
       {/* Playback & Scrubbing Controller */}
@@ -321,6 +326,13 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
         cliMode={cliMode}
         cliSubModeLabel={cliSubModeLabel}
         isObjectiveSolved={isObjectiveSolved}
+        activeCliNodeId={activeCliNodeId}
+        nodes={computedTopology.nodes}
+        targetNodeId={scenario.cliConfig?.targetNodeId}
+        onSelectCliNode={(nodeId) => {
+          setActiveCliNodeId(nodeId);
+          setSelectedNodeId(nodeId);
+        }}
         onExecuteCommand={executeCliCommand}
         onResetCli={resetCli}
       />
@@ -339,7 +351,10 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
         <NodeTableInspector
           nodes={computedTopology.nodes}
           selectedNodeId={selectedNodeId}
-          onSelectNode={setSelectedNodeId}
+          onSelectNode={(nodeId) => {
+            setSelectedNodeId(nodeId);
+            setActiveCliNodeId(nodeId);
+          }}
           socraticCheckpoint={currentStep.socraticCheckpoint}
           stepTitle={currentStep.title}
           stepIndex={currentStepIndex}

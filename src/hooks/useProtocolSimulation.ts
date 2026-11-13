@@ -23,7 +23,13 @@ export function extractBaseHostname(rawPrompt: string): string {
   return rawPrompt.trim().replace(/[#>]+$/, '').trim() || 'Router';
 }
 
-export function formatCliPrompt(baseHostname: string, mode: CliMode, subModeLabel = 'config-if'): string {
+export function formatCliPrompt(
+  baseHostname: string,
+  mode: CliMode,
+  subModeLabel = 'config-if',
+  isHost = false
+): string {
+  const hasPromptGreater = baseHostname.trim().endsWith('>');
   const cleanHost = extractBaseHostname(baseHostname);
   if (mode === 'config') {
     return `${cleanHost}(config)#`;
@@ -31,7 +37,8 @@ export function formatCliPrompt(baseHostname: string, mode: CliMode, subModeLabe
   if (mode === 'config-sub') {
     return `${cleanHost}(${subModeLabel})#`;
   }
-  return `${cleanHost}#`;
+  const promptChar = (isHost || hasPromptGreater) ? '>' : '#';
+  return `${cleanHost}${promptChar}`;
 }
 
 export interface CliTransitionResult {
@@ -140,6 +147,192 @@ export function evaluateCliNavigation(
   return null;
 }
 
+/**
+ * Synthesizes dynamic, realistic tabular Cisco IOS output for standard verification
+ * commands directly from a topology node's live state machine.
+ */
+export function synthesizeLiveShowCommand(command: string, node: TopologyNode): string | null {
+  const normalized = command.trim().toLowerCase().replace(/\s+/g, ' ');
+
+  // 1. show ip interface brief
+  if (/^(?:show|sh)\s+ip\s+int(?:erface)?\s+br(?:ief)?$/.test(normalized)) {
+    const lines = [
+      'Interface                  IP-Address      OK? Method Status                Protocol',
+    ];
+    if (!node.interfaces || node.interfaces.length === 0) {
+      lines.push('(No physical or virtual interfaces configured on this device)');
+    } else {
+      for (const iface of node.interfaces) {
+        const namePad = iface.name.padEnd(26);
+        const ipPad = (iface.ip || 'unassigned').padEnd(15);
+        lines.push(`${namePad} ${ipPad} YES manual up                    up      `);
+      }
+    }
+    return lines.join('\n');
+  }
+
+  // 2. show ip route
+  if (/^(?:show|sh)\s+ip\s+ro(?:ute)?$/.test(normalized)) {
+    const lines = [
+      'Codes: L - local, C - connected, S - static, R - RIP, M - mobile, B - BGP',
+      '       D - EIGRP, EX - EIGRP external, O - OSPF, IA - OSPF inter area ',
+      '       N1 - OSPF NSSA external type 1, N2 - OSPF NSSA external type 2',
+      '       E1 - OSPF external type 1, E2 - OSPF external type 2',
+      '',
+      'Gateway of last resort is not set',
+      '',
+    ];
+
+    const routes = node.tableState?.routingTable || [];
+    if (routes.length > 0) {
+      for (const r of routes) {
+        const maskStr = r.mask?.startsWith('/')
+          ? r.mask
+          : (r.mask === '255.255.255.0' ? '/24' : r.mask ? `/${r.mask}` : '/24');
+        const netStr = `${r.network}${maskStr}`;
+        if (r.protocol === 'C') {
+          lines.push(`C        ${netStr} is directly connected, ${r.interface}`);
+        } else {
+          const ad = r.adminDistance ?? (r.protocol === 'B' ? 20 : r.protocol === 'O' ? 110 : 1);
+          const met = r.metric ?? (r.protocol === 'B' ? 0 : 10);
+          lines.push(`${r.protocol.padEnd(8)} ${netStr} [${ad}/${met}] via ${r.nextHop || '0.0.0.0'}, ${r.interface}`);
+        }
+      }
+    } else {
+      // Synthesize directly connected routes from interfaces with IP addresses
+      const ipIfaces = (node.interfaces || []).filter((i) => Boolean(i.ip));
+      if (ipIfaces.length > 0) {
+        for (const iface of ipIfaces) {
+          const ip = iface.ip!;
+          const parts = ip.split('.');
+          const network = parts.length === 4 ? `${parts[0]}.${parts[1]}.${parts[2]}.0/24` : `${ip}/24`;
+          lines.push(`C        ${network} is directly connected, ${iface.name}`);
+          lines.push(`L        ${ip}/32 is directly connected, ${iface.name}`);
+        }
+      } else {
+        lines.push('No active routes installed in RIB.');
+      }
+    }
+    return lines.join('\n');
+  }
+
+  // 3. show arp / show ip arp / arp -a
+  if (/^(?:(?:show|sh)\s+(?:ip\s+)?arp|arp\s+-a)$/.test(normalized)) {
+    const lines = [
+      'Protocol  Address          Age (min)  Hardware Addr   Type   Interface',
+    ];
+    const arps = node.tableState?.arpCache || [];
+    if (arps.length > 0) {
+      for (const a of arps) {
+        const protoPad = 'Internet'.padEnd(10);
+        const addrPad = a.ip.padEnd(17);
+        const macPad = a.mac.padEnd(16);
+        const iface = a.interface || node.interfaces?.[0]?.name || 'Vlan1';
+        lines.push(`${protoPad}${addrPad}-   ${macPad}ARPA   ${iface}`);
+      }
+    } else {
+      lines.push('(ARP cache is empty)');
+    }
+    return lines.join('\n');
+  }
+
+  // 4. show mac address-table
+  if (/^(?:show|sh)\s+mac(?:-|\s+)address(?:-table)?$/.test(normalized)) {
+    const lines = [
+      '          Mac Address Table',
+      '-------------------------------------------',
+      'Vlan    Mac Address       Type        Ports',
+      '----    -----------       --------    -----',
+    ];
+    const macs = node.tableState?.macTable || [];
+    if (macs.length > 0) {
+      for (const m of macs) {
+        const vlanPad = String(m.vlan || 1).padEnd(8);
+        const macPad = m.mac.padEnd(18);
+        const typePad = (m.type || 'DYNAMIC').padEnd(12);
+        lines.push(`${vlanPad}${macPad}${typePad}${m.port}`);
+      }
+      lines.push(`Total Mac Addresses for this criterion: ${macs.length}`);
+    } else {
+      lines.push('Total Mac Addresses for this criterion: 0');
+    }
+    return lines.join('\n');
+  }
+
+  // 5. show ip ospf neighbor
+  if (/^(?:show|sh)\s+ip\s+ospf\s+nei(?:ghbor)?$/.test(normalized)) {
+    const lines = [
+      'Neighbor ID     Pri   State           Dead Time   Address         Interface',
+    ];
+    const neighbors = node.tableState?.ospfNeighbors || [];
+    if (neighbors.length > 0) {
+      for (const n of neighbors) {
+        const idPad = n.neighborId.padEnd(16);
+        const priPad = String(n.priority ?? 1).padEnd(6);
+        const statePad = n.state.padEnd(16);
+        const addrPad = (n.address || n.neighborId).padEnd(16);
+        lines.push(`${idPad}${priPad}${statePad}00:00:36    ${addrPad}${n.interface}`);
+      }
+    } else {
+      lines.push('(No active OSPF neighbors discovered)');
+    }
+    return lines.join('\n');
+  }
+
+  // 6. show running-config / sh run
+  if (/^(?:show|sh)\s+run(?:ning-config)?$/.test(normalized)) {
+    const lines = [
+      'Building configuration...',
+      '',
+      'Current configuration : 1152 bytes',
+      '!',
+      'version 15.4',
+      'service timestamps debug datetime msec',
+      'service timestamps log datetime msec',
+      'no service password-encryption',
+      '!',
+      `hostname ${node.name}`,
+      '!',
+    ];
+    for (const iface of node.interfaces || []) {
+      lines.push(`interface ${iface.name}`);
+      if (iface.ip) {
+        lines.push(` ip address ${iface.ip} 255.255.255.0`);
+      } else {
+        lines.push(' no ip address');
+      }
+      lines.push(' no shutdown');
+      lines.push('!');
+    }
+    lines.push('end');
+    return lines.join('\n');
+  }
+
+  // 7. show version / sh ver
+  if (/^(?:show|sh)\s+ver(?:sion)?$/.test(normalized)) {
+    return [
+      'Cisco IOS Software, C2900 Software (C2900-UNIVERSALK9-M), Version 15.4(3)M2, RELEASE SOFTWARE (fc1)',
+      'Technical Support: http://www.cisco.com/techsupport',
+      'Copyright (c) 1986-2024 by Cisco Systems, Inc.',
+      '',
+      `ROM: System Bootstrap, Version 15.4(3)M2`,
+      `${node.name} uptime is 4 hours, 28 minutes`,
+      'System returned to ROM by reload',
+      'System image file is "flash0:c2900-universalk9-mz.SPA.154-3.M2.bin"',
+      '',
+      'Cisco CISCO2911/K9 (revision 1.0) with 507904K/16384K bytes of memory.',
+      `${node.interfaces?.length || 2} Gigabit Ethernet interfaces`,
+      'DRAM configuration is 64 bits wide with parity disabled.',
+      '255K bytes of non-volatile configuration memory.',
+      '250880K bytes of ATA System CompactFlash 0 (Read/Write)',
+      '',
+      'Configuration register is 0x2102',
+    ].join('\n');
+  }
+
+  return null;
+}
+
 export interface UseProtocolSimulationResult {
   // Core state
   scenario: ProtocolSimulationScenario;
@@ -170,6 +363,12 @@ export interface UseProtocolSimulationResult {
   cliMutations: NodeStateMutation[];
   executeCliCommand: (rawInput: string) => { success: boolean; output: string; goalAchieved?: boolean };
   resetCli: () => void;
+
+  // Interactive Multi-Node CLI Sessions (Phase K)
+  activeCliNodeId: string;
+  setActiveCliNodeId: (nodeId: string) => void;
+  activeCliNode: TopologyNode;
+  isTargetNode: boolean;
 
 
   // Actions
@@ -396,6 +595,11 @@ export function useProtocolSimulation(
   const [activeInspectorTab, setActiveInspectorTab] = useState<InspectorTab>('headers');
 
   // In-App Bounded CLI State & Authentic Cisco IOS Modes
+  const defaultTargetNodeId =
+    initialScenario.cliConfig?.targetNodeId ||
+    initialScenario.topology.nodes[0]?.id ||
+    'router-1';
+  const [activeCliNodeId, setActiveCliNodeIdState] = useState<string>(defaultTargetNodeId);
   const [promptHostname, setPromptHostname] = useState<string>(
     initialScenario.cliConfig?.promptHostname || 'Router#'
   );
@@ -406,26 +610,6 @@ export function useProtocolSimulation(
   const [cliHistory, setCliHistory] = useState<CliLogEntry[]>(() =>
     createInitialCliHistory(initialScenario)
   );
-
-  const baseHostname = useMemo(() => extractBaseHostname(promptHostname), [promptHostname]);
-
-  const activePrompt = useMemo(
-    () => formatCliPrompt(baseHostname, cliMode, cliSubModeLabel),
-    [baseHostname, cliMode, cliSubModeLabel]
-  );
-
-  // Sync state if scenario changes externally
-  useEffect(() => {
-    setScenarioState(initialScenario);
-    setCurrentStepIndex(0);
-    setIsPlaying(false);
-    setPromptHostname(initialScenario.cliConfig?.promptHostname || 'Router#');
-    setCliMode('privileged');
-    setCliSubModeLabel('config-if');
-    setCliMutations([]);
-    setIsObjectiveSolved(false);
-    setCliHistory(createInitialCliHistory(initialScenario));
-  }, [initialScenario.metadata.id]);
 
   const totalSteps = scenario.steps.length;
   const isAtStart = currentStepIndex === 0;
@@ -464,6 +648,81 @@ export function useProtocolSimulation(
       links: scenario.topology.links,
     };
   }, [scenario, currentStepIndex, cliMutations]);
+
+  // Dynamic Active CLI Node derivation
+  const activeCliNode = useMemo(() => {
+    return (
+      computedTopology.nodes.find((n) => n.id === activeCliNodeId) ||
+      computedTopology.nodes[0] || {
+        id: activeCliNodeId,
+        name: 'Router',
+        type: 'router' as const,
+        interfaces: [],
+        tableState: {},
+      }
+    );
+  }, [computedTopology.nodes, activeCliNodeId]);
+
+  const isTargetNode = Boolean(
+    scenario.cliConfig?.targetNodeId
+      ? activeCliNodeId === scenario.cliConfig.targetNodeId
+      : true
+  );
+
+  const baseHostname = useMemo(() => {
+    if (isTargetNode && scenario.cliConfig?.promptHostname) {
+      return extractBaseHostname(scenario.cliConfig.promptHostname);
+    }
+    return extractBaseHostname(activeCliNode.name);
+  }, [isTargetNode, scenario.cliConfig?.promptHostname, activeCliNode.name]);
+
+  const isHost = activeCliNode.type === 'host';
+
+  const activePrompt = useMemo(
+    () => formatCliPrompt(baseHostname, cliMode, cliSubModeLabel, isHost),
+    [baseHostname, cliMode, cliSubModeLabel, isHost]
+  );
+
+  // Switch active CLI session to a different node
+  const setActiveCliNodeId = useCallback(
+    (nodeId: string) => {
+      if (nodeId === activeCliNodeId) return;
+      setActiveCliNodeIdState(nodeId);
+      setCliMode('privileged');
+      setCliSubModeLabel('config-if');
+      const targetNode = computedTopology.nodes.find((n) => n.id === nodeId);
+      const isTarget = nodeId === scenario.cliConfig?.targetNodeId;
+      const nodeName = targetNode?.name || nodeId;
+      const badge = isTarget ? 'Break-Fix Target Node' : 'Inspection Node';
+      setCliHistory((prev) => [
+        ...prev,
+        {
+          id: `cli-switch-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          type: 'system',
+          text: `Switched console session to ${nodeName} (${nodeId}) [${badge}]`,
+        },
+      ]);
+    },
+    [activeCliNodeId, computedTopology.nodes, scenario.cliConfig?.targetNodeId]
+  );
+
+  // Sync state if scenario changes externally
+  useEffect(() => {
+    setScenarioState(initialScenario);
+    setCurrentStepIndex(0);
+    setIsPlaying(false);
+    const initialTargetId =
+      initialScenario.cliConfig?.targetNodeId ||
+      initialScenario.topology.nodes[0]?.id ||
+      'router-1';
+    setActiveCliNodeIdState(initialTargetId);
+    setPromptHostname(initialScenario.cliConfig?.promptHostname || 'Router#');
+    setCliMode('privileged');
+    setCliSubModeLabel('config-if');
+    setCliMutations([]);
+    setIsObjectiveSolved(false);
+    setCliHistory(createInitialCliHistory(initialScenario));
+  }, [initialScenario.metadata.id]);
 
   // Automated playback timer
   useEffect(() => {
@@ -534,13 +793,25 @@ export function useProtocolSimulation(
     setScenarioState(newScenario);
     setCurrentStepIndex(0);
     setIsPlaying(false);
+    const newTargetId =
+      newScenario.cliConfig?.targetNodeId ||
+      newScenario.topology.nodes[0]?.id ||
+      'router-1';
+    setActiveCliNodeIdState(newTargetId);
     setPromptHostname(newScenario.cliConfig?.promptHostname || 'Router#');
+    setCliMode('privileged');
+    setCliSubModeLabel('config-if');
     setCliMutations([]);
     setIsObjectiveSolved(false);
     setCliHistory(createInitialCliHistory(newScenario));
   }, []);
 
   const resetCli = useCallback(() => {
+    const defaultNodeId =
+      scenario.cliConfig?.targetNodeId ||
+      scenario.topology.nodes[0]?.id ||
+      'router-1';
+    setActiveCliNodeIdState(defaultNodeId);
     setPromptHostname(scenario.cliConfig?.promptHostname || 'Router#');
     setCliMode('privileged');
     setCliSubModeLabel('config-if');
@@ -594,16 +865,20 @@ export function useProtocolSimulation(
 
         const allowed = scenario.cliConfig?.allowedCommands || [];
         const cmdList =
-          allowed.length > 0
+          isTargetNode && allowed.length > 0
             ? allowed
                 .map(
                   (c) =>
                     `  ${c.command.padEnd(35)} - ${c.description || 'Diagnostic/Action command'}`
                 )
                 .join('\n')
-            : '  (No bounded commands registered for this scenario)';
+            : '  show ip interface brief             - Display IP interface status and IP addresses\n  show ip route                       - Display current IP routing table\n  show arp                            - Display ARP cache entries\n  show mac address-table              - Display MAC address forwarding table\n  show ip ospf neighbor               - Display OSPF neighbor adjacencies';
 
-        const helpText = `${navGuide}\n\nScenario Commands (${scenario.cliConfig?.protocolScope || 'Protocol'}):\n${cmdList}\n\nNote: Cisco IOS commands are case-insensitive and support standard abbreviations.`;
+        const nodeScope = isTargetNode
+          ? `Scenario Commands (${scenario.cliConfig?.protocolScope || 'Protocol'} - Break-Fix Target)`
+          : `Live Node Inspection (${activeCliNode.name})`;
+
+        const helpText = `${navGuide}\n\n${nodeScope}:\n${cmdList}\n\nNote: Cisco IOS commands are case-insensitive and support standard abbreviations.`;
 
         const outEntry: CliLogEntry = {
           id: `cli-out-${Date.now()}`,
@@ -615,24 +890,26 @@ export function useProtocolSimulation(
         return { success: true, output: helpText };
       }
 
-      // 3. Match against scenario's allowedCommands (support direct or 'do <cmd>')
+      // 3. Match against scenario's allowedCommands (only on target node)
       let targetCmd = normalized;
       if ((cliMode === 'config' || cliMode === 'config-sub') && targetCmd.startsWith('do ')) {
         targetCmd = targetCmd.slice(3).trim();
       }
 
       const allowedCommands = scenario.cliConfig?.allowedCommands || [];
-      const match = allowedCommands.find((def) => {
-        const canonical = def.command.toLowerCase().trim().replace(/\s+/g, ' ');
-        if (targetCmd === canonical) return true;
-        if (
-          def.aliases &&
-          def.aliases.some((a) => a.toLowerCase().trim().replace(/\s+/g, ' ') === targetCmd)
-        ) {
-          return true;
-        }
-        return false;
-      });
+      const match = isTargetNode
+        ? allowedCommands.find((def) => {
+            const canonical = def.command.toLowerCase().trim().replace(/\s+/g, ' ');
+            if (targetCmd === canonical) return true;
+            if (
+              def.aliases &&
+              def.aliases.some((a) => a.toLowerCase().trim().replace(/\s+/g, ' ') === targetCmd)
+            ) {
+              return true;
+            }
+            return false;
+          })
+        : undefined;
 
       if (match) {
         const outEntry: CliLogEntry = {
@@ -664,8 +941,20 @@ export function useProtocolSimulation(
         return { success: true, output: match.output, goalAchieved: match.goalAchieved };
       }
 
-      // 4. Command not recognized
-      const errorMsg = `% Invalid input detected at '^' marker: "${trimmed}"\nType '?' or 'help' to inspect valid commands for current mode (${cliMode}).`;
+      // 4. Dynamic Live-State Show Command Synthesis on active node
+      const liveShowOutput = synthesizeLiveShowCommand(targetCmd, activeCliNode);
+      if (liveShowOutput !== null) {
+        const outEntry: CliLogEntry = {
+          id: `cli-out-${Date.now()}`,
+          type: 'output',
+          text: liveShowOutput,
+        };
+        setCliHistory((prev) => [...prev, inputEntry, outEntry]);
+        return { success: true, output: liveShowOutput };
+      }
+
+      // 5. Command not recognized
+      const errorMsg = `% Invalid input detected at '^' marker: "${trimmed}"\nType '?' or 'help' to inspect valid commands for current mode (${cliMode}) on ${activeCliNode.name}.`;
       const errEntry: CliLogEntry = {
         id: `cli-err-${Date.now()}`,
         type: 'error',
@@ -675,7 +964,7 @@ export function useProtocolSimulation(
       setCliHistory((prev) => [...prev, inputEntry, errEntry]);
       return { success: false, output: errorMsg };
     },
-    [activePrompt, cliMode, scenario]
+    [activePrompt, cliMode, cliSubModeLabel, activeCliNode, isTargetNode, scenario]
   );
 
   return {
@@ -698,6 +987,10 @@ export function useProtocolSimulation(
     cliSubModeLabel,
     isObjectiveSolved,
     cliMutations,
+    activeCliNodeId,
+    setActiveCliNodeId,
+    activeCliNode,
+    isTargetNode,
     executeCliCommand,
     resetCli,
     play,
