@@ -64,16 +64,19 @@ export function normalizeDifficultyLevel(raw: unknown): DifficultyLevel {
 /**
  * Validates raw JSON output from an AI provider into a structured ProtocolSimulationScenario.
  */
-export function validateGeneratedSimulation(rawText: string): SimulationValidationResult {
+export function validateGeneratedSimulation(rawText: string | any): SimulationValidationResult {
   const errors: string[] = [];
 
-  if (!rawText || typeof rawText !== 'string' || !rawText.trim()) {
+  if (!rawText) {
     return { valid: false, errors: ['Raw AI response is empty'] };
   }
 
   // 1. Extract and parse JSON
   let parsed: any;
   if (typeof rawText === 'string') {
+    if (!rawText.trim()) {
+      return { valid: false, errors: ['Raw AI response is empty'] };
+    }
     const extract = extractJsonFromText(rawText);
     if (!extract.success) {
       return {
@@ -82,8 +85,10 @@ export function validateGeneratedSimulation(rawText: string): SimulationValidati
       };
     }
     parsed = extract.data;
-  } else {
+  } else if (typeof rawText === 'object') {
     parsed = rawText;
+  } else {
+    return { valid: false, errors: ['Invalid simulation scenario input type'] };
   }
 
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -363,3 +368,6 @@ export function validateGeneratedSimulation(rawText: string): SimulationValidati
 
   return { valid: true, scenario };
 }
+
+export const validateSimulationScenario = validateGeneratedSimulation;
+

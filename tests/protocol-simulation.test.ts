@@ -26,6 +26,20 @@ import {
 } from '../api/_lib/ai/simulation-validator.js';
 import { getActiveAiProvider, MockAiProvider, __setTestAiProvider } from '../api/_lib/ai/mock-provider.js';
 import { buildSimulationGenerationPrompt } from '../api/_lib/ai/prompt-builder.js';
+import {
+  saveCustomSimulation,
+  listSavedSimulations,
+  getSavedSimulationById,
+  deleteSavedSimulation,
+  __setTestMockStore,
+} from '../api/_lib/db/client.js';
+import simulationsHandler from '../api/_routes/simulations.js';
+import {
+  simulationsApi,
+  getLocalSavedSimulations,
+  setLocalSavedSimulations,
+} from '../src/lib/api.ts';
+
 
 /**
  * NetMentor Protocol Explorer Engine Automated Test Suite
@@ -768,6 +782,193 @@ async function runProtocolSimulationTests() {
   assert(!missingStepsSimVal.valid, 'TEST_MISSING_STEPS simulation response safely caught as invalid');
 
   __setTestAiProvider(null);
+
+  // =========================================================================
+  // 8. Protocol Simulation Persistence & Route Handlers (Phase I)
+  // =========================================================================
+  console.log('\n8. Testing Protocol Simulation Persistence & Route Handlers:');
+
+  // 8.1 Schema & Client Mock Store
+  const mockSavedStore: any[] = [];
+  __setTestMockStore({
+    saveCustomSimulation: async (userId: string, scenario: any) => {
+      const existingIdx = mockSavedStore.findIndex((s) => s.userId === userId && s.scenarioId === scenario.metadata.id);
+      const record = {
+        id: `mock-uuid-${mockSavedStore.length + 1}`,
+        userId,
+        scenarioId: scenario.metadata.id,
+        title: scenario.metadata.title,
+        protocol: scenario.metadata.protocol,
+        certification: scenario.metadata.certification,
+        difficulty: scenario.metadata.difficulty,
+        scenario,
+        createdAt: new Date().toISOString(),
+      };
+      if (existingIdx >= 0) {
+        mockSavedStore[existingIdx] = record;
+      } else {
+        mockSavedStore.push(record);
+      }
+      return record;
+    },
+    listSavedSimulations: async (userId: string) => {
+      return mockSavedStore.filter((s) => s.userId === userId);
+    },
+    getSavedSimulationById: async (userId: string, id: string) => {
+      return mockSavedStore.find((s) => s.userId === userId && (s.id === id || s.scenarioId === id)) || null;
+    },
+    deleteSavedSimulation: async (userId: string, id: string) => {
+      const idx = mockSavedStore.findIndex((s) => s.userId === userId && (s.id === id || s.scenarioId === id));
+      if (idx >= 0) {
+        mockSavedStore.splice(idx, 1);
+        return true;
+      }
+      return false;
+    },
+  });
+
+  // Test saving custom scenario
+  const testScenario = BGP_BEST_PATH_SCENARIO;
+  const savedRec = await saveCustomSimulation('user-test-1', testScenario);
+  assert(savedRec.userId === 'user-test-1', 'Simulation persisted with correct userId');
+  assert(savedRec.scenarioId === testScenario.metadata.id, 'Simulation persisted with correct scenarioId');
+  assert(savedRec.scenario.metadata.protocol === 'BGP', 'Simulation JSON payload preserved');
+
+  // Test listing
+  const user1List = await listSavedSimulations('user-test-1');
+  assert(user1List.length === 1, 'listSavedSimulations returned 1 scenario for user-test-1');
+  assert(user1List[0].scenarioId === testScenario.metadata.id, 'Listed scenario matches saved scenario');
+
+  // Test user isolation
+  const user2List = await listSavedSimulations('user-test-2');
+  assert(user2List.length === 0, 'User isolation verified: user-test-2 has 0 saved scenarios');
+
+  // Test getSavedSimulationById
+  const fetchedByScenarioId = await getSavedSimulationById('user-test-1', testScenario.metadata.id);
+  assert(Boolean(fetchedByScenarioId), 'getSavedSimulationById retrieved record by scenarioId');
+  const fetchedByUuid = await getSavedSimulationById('user-test-1', savedRec.id);
+  assert(Boolean(fetchedByUuid), 'getSavedSimulationById retrieved record by database UUID');
+  const fetchedWrongUser = await getSavedSimulationById('user-test-2', testScenario.metadata.id);
+  assert(fetchedWrongUser === null, 'getSavedSimulationById enforces user isolation');
+
+  // Test delete
+  const deleteWrongUser = await deleteSavedSimulation('user-test-2', testScenario.metadata.id);
+  assert(deleteWrongUser === false, 'deleteSavedSimulation returns false when user does not own scenario');
+  const deleteSuccess = await deleteSavedSimulation('user-test-1', testScenario.metadata.id);
+  assert(deleteSuccess === true, 'deleteSavedSimulation succeeds for owner');
+  const user1ListAfterDel = await listSavedSimulations('user-test-1');
+  assert(user1ListAfterDel.length === 0, 'Scenario removed from database after deletion');
+
+  __setTestMockStore(null);
+
+  // 8.2 API Route Dispatch & Handlers (/api/simulations)
+  function createMockReqRes(options: {
+    method: string;
+    url?: string;
+    headers?: Record<string, string>;
+    cookies?: Record<string, string>;
+    body?: any;
+    query?: Record<string, any>;
+  }) {
+    let statusCode = 200;
+    let responseData: any = null;
+    const responseHeaders: Record<string, string> = {};
+
+    const req: any = {
+      method: options.method,
+      url: options.url || '/api/simulations',
+      headers: options.headers || {},
+      cookies: options.cookies || {},
+      body: options.body,
+      query: options.query || {},
+    };
+
+    const res: any = {
+      status(code: number) {
+        statusCode = code;
+        return res;
+      },
+      setHeader(name: string, value: string) {
+        responseHeaders[name.toLowerCase()] = value;
+        return res;
+      },
+      json(data: any) {
+        responseData = data;
+        return res;
+      },
+      getStatus: () => statusCode,
+      getData: () => responseData,
+      getHeaders: () => responseHeaders,
+    };
+
+    return { req, res };
+  }
+
+  // Demo mode GET
+  const { req: demoGetReq, res: demoGetRes } = createMockReqRes({
+    method: 'GET',
+    headers: { 'x-netmentor-demo': 'true' },
+  });
+  await simulationsHandler(demoGetReq, demoGetRes);
+  assert(demoGetRes.getStatus() === 200, 'Demo GET /api/simulations returned HTTP 200');
+  assert(demoGetRes.getData()?.isDemoMode === true, 'Demo response flags isDemoMode: true');
+
+  // Demo mode POST with CSRF
+  const { req: demoPostReq, res: demoPostRes } = createMockReqRes({
+    method: 'POST',
+    headers: { 'x-netmentor-demo': 'true', 'x-netmentor-request': '1' },
+    body: { scenario: OSPF_ADJACENCY_SCENARIO },
+  });
+  await simulationsHandler(demoPostReq, demoPostRes);
+  assert(demoPostRes.getStatus() === 201, 'Demo POST /api/simulations returned HTTP 201 Created');
+  assert(demoPostRes.getData()?.simulation?.protocol === 'OSPF', 'Demo POST preserved scenario protocol');
+
+  // Unauthenticated without demo mode returns 401
+  const { req: unauthReq, res: unauthRes } = createMockReqRes({
+    method: 'GET',
+  });
+  await simulationsHandler(unauthReq, unauthRes);
+  assert(unauthRes.getStatus() === 401, 'Unauthenticated GET /api/simulations rejected with HTTP 401');
+
+  // POST without CSRF header rejected with 403
+  const { req: noCsrfReq, res: noCsrfRes } = createMockReqRes({
+    method: 'POST',
+    headers: { 'x-netmentor-demo': 'true' }, // missing x-netmentor-request
+    body: { scenario: TCP_HANDSHAKE_SCENARIO },
+  });
+  await simulationsHandler(noCsrfReq, noCsrfRes);
+  assert(noCsrfRes.getStatus() === 403, 'POST /api/simulations without CSRF rejected with HTTP 403');
+
+  // Unsupported HTTP Method (PUT) rejected with 405
+  const { req: putReq, res: putRes } = createMockReqRes({
+    method: 'PUT',
+    headers: { 'x-netmentor-demo': 'true' },
+  });
+  await simulationsHandler(putReq, putRes);
+  assert(putRes.getStatus() === 405, 'PUT /api/simulations rejected with HTTP 405 Method Not Allowed');
+
+  // 8.3 In-Memory LocalStorage Fallback Verification
+  // In Node environment, mock localStorage if needed
+  if (typeof globalThis.localStorage === 'undefined') {
+    const memStore: Record<string, string> = {};
+    (globalThis as any).localStorage = {
+      getItem: (key: string) => memStore[key] ?? null,
+      setItem: (key: string, val: string) => { memStore[key] = String(val); },
+      removeItem: (key: string) => { delete memStore[key]; },
+      clear: () => { Object.keys(memStore).forEach((k) => delete memStore[k]); },
+    };
+  }
+
+  setLocalSavedSimulations([]);
+  assert(getLocalSavedSimulations().length === 0, 'Local storage initialized empty');
+  await simulationsApi.saveCustomSimulation(VLAN_TRUNKING_ROAS_SCENARIO, { isDemoMode: true });
+  const localList = getLocalSavedSimulations();
+  assert(localList.length === 1, 'Custom simulation saved to local storage fallback');
+  assert(localList[0].scenarioId === 'vlan-trunking-roas', 'Local scenarioId matches saved scenario');
+
+  await simulationsApi.deleteSavedSimulation('vlan-trunking-roas', { isDemoMode: true });
+  assert(getLocalSavedSimulations().length === 0, 'Custom simulation removed from local storage fallback');
+
 
   console.log('\n=============================================================');
   console.log(`✓ ALL ${passed} PROTOCOL SIMULATION CHECKS PASSED CLEANLY! (0 failures)`);

@@ -6,6 +6,8 @@ import { eq, and, gt, isNull, or } from 'drizzle-orm';
 import crypto from 'node:crypto';
 import * as schema from './schema.js';
 import type { UserRole } from '../types.js';
+import type { ProtocolSimulationScenario, SavedSimulationRecord } from '../../../src/types/protocol-simulation.js';
+
 
 export type DbClient = ReturnType<typeof drizzle<typeof schema>>;
 
@@ -61,6 +63,10 @@ interface TestMockStore {
   failGenerationTask?: (taskId: string, error: { message: string; category?: string; isRetryable?: boolean }) => Promise<boolean>;
   cancelGenerationTask?: (userId: string, taskId: string) => Promise<boolean>;
   cleanupStaleGenerationTasks?: (olderThanSeconds?: number) => Promise<number>;
+  saveCustomSimulation?: (userId: string, scenario: any) => Promise<any>;
+  listSavedSimulations?: (userId: string) => Promise<any[]>;
+  getSavedSimulationById?: (userId: string, scenarioOrDbId: string) => Promise<any>;
+  deleteSavedSimulation?: (userId: string, scenarioOrDbId: string) => Promise<boolean>;
 }
 
 let activeTestMockStore: TestMockStore | null = null;
@@ -3310,6 +3316,232 @@ export async function cleanupStaleGenerationTasks(graceBufferSeconds: number = 5
 
   return res.rowCount ?? 0;
 }
+
+let savedSimulationsTableEnsured = false;
+
+export async function ensureSavedSimulationsTable(): Promise<void> {
+  if (savedSimulationsTableEnsured) return;
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS "saved_simulations" (
+        "id" varchar(36) PRIMARY KEY NOT NULL,
+        "user_id" varchar(36) NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+        "scenario_id" varchar(128) NOT NULL,
+        "title" varchar(255) NOT NULL,
+        "protocol" varchar(32) NOT NULL,
+        "certification" varchar(32) NOT NULL,
+        "difficulty" varchar(32) NOT NULL,
+        "scenario_json" text NOT NULL,
+        "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+        "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS "saved_simulations_user_id_idx" ON "saved_simulations" ("user_id");
+      CREATE INDEX IF NOT EXISTS "saved_simulations_user_created_idx" ON "saved_simulations" ("user_id", "created_at");
+      CREATE UNIQUE INDEX IF NOT EXISTS "saved_simulations_user_scenario_unique" ON "saved_simulations" ("user_id", "scenario_id");
+    `);
+    savedSimulationsTableEnsured = true;
+  } catch (err: any) {
+    console.error('[Saved Simulations DB Init Warning]:', err?.message);
+  }
+}
+
+/**
+ * Persists or updates an AI-generated protocol simulation scenario for a user.
+ */
+export async function saveCustomSimulation(
+  userId: string,
+  scenario: ProtocolSimulationScenario
+): Promise<SavedSimulationRecord> {
+  if (activeTestMockStore?.saveCustomSimulation) {
+    return activeTestMockStore.saveCustomSimulation(userId, scenario);
+  }
+
+  await ensureSavedSimulationsTable();
+
+  const id = crypto.randomUUID();
+  const scenarioId = scenario.metadata.id || `sim-${id.slice(0, 8)}`;
+  const title = (scenario.metadata.title || 'Custom Simulation').trim().slice(0, 255);
+  const protocol = scenario.metadata.protocol || 'OSPF';
+  const certification = scenario.metadata.certification || 'CCNA';
+  const difficulty = scenario.metadata.difficulty || 'Intermediate';
+  const scenarioJson = JSON.stringify(scenario);
+
+  const res = await query<any>(
+    `INSERT INTO saved_simulations
+     (id, user_id, scenario_id, title, protocol, certification, difficulty, scenario_json, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+     ON CONFLICT ("user_id", "scenario_id")
+     DO UPDATE SET
+       title = EXCLUDED.title,
+       protocol = EXCLUDED.protocol,
+       certification = EXCLUDED.certification,
+       difficulty = EXCLUDED.difficulty,
+       scenario_json = EXCLUDED.scenario_json,
+       updated_at = NOW()
+     RETURNING
+       id,
+       user_id as "userId",
+       scenario_id as "scenarioId",
+       title,
+       protocol,
+       certification,
+       difficulty,
+       scenario_json as "scenarioJson",
+       created_at as "createdAt",
+       updated_at as "updatedAt";`,
+    [id, userId, scenarioId, title, protocol, certification, difficulty, scenarioJson]
+  );
+
+  const row = res.rows[0];
+  let parsedScenario: ProtocolSimulationScenario;
+  try {
+    parsedScenario = JSON.parse(row.scenarioJson);
+  } catch {
+    parsedScenario = scenario;
+  }
+
+  return {
+    id: row.id,
+    userId: row.userId,
+    scenarioId: row.scenarioId,
+    title: row.title,
+    protocol: row.protocol,
+    certification: row.certification,
+    difficulty: row.difficulty,
+    scenario: parsedScenario,
+    createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : new Date().toISOString(),
+    updatedAt: row.updatedAt ? new Date(row.updatedAt).toISOString() : undefined,
+  };
+}
+
+/**
+ * Lists all saved simulations owned by a user, ordered by creation date descending.
+ */
+export async function listSavedSimulations(userId: string): Promise<SavedSimulationRecord[]> {
+  if (activeTestMockStore?.listSavedSimulations) {
+    return activeTestMockStore.listSavedSimulations(userId);
+  }
+
+  await ensureSavedSimulationsTable();
+
+  const res = await query<any>(
+    `SELECT
+       id,
+       user_id as "userId",
+       scenario_id as "scenarioId",
+       title,
+       protocol,
+       certification,
+       difficulty,
+       scenario_json as "scenarioJson",
+       created_at as "createdAt",
+       updated_at as "updatedAt"
+     FROM saved_simulations
+     WHERE user_id = $1
+     ORDER BY created_at DESC;`,
+    [userId]
+  );
+
+  return (res.rows || []).map((row) => {
+    let parsedScenario: ProtocolSimulationScenario;
+    try {
+      parsedScenario = JSON.parse(row.scenarioJson);
+    } catch {
+      parsedScenario = {} as any;
+    }
+
+    return {
+      id: row.id,
+      userId: row.userId,
+      scenarioId: row.scenarioId,
+      title: row.title,
+      protocol: row.protocol,
+      certification: row.certification,
+      difficulty: row.difficulty,
+      scenario: parsedScenario,
+      createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : new Date().toISOString(),
+      updatedAt: row.updatedAt ? new Date(row.updatedAt).toISOString() : undefined,
+    };
+  });
+}
+
+/**
+ * Fetches a single saved simulation by database UUID or scenario ID, with strict user isolation.
+ */
+export async function getSavedSimulationById(
+  userId: string,
+  scenarioOrDbId: string
+): Promise<SavedSimulationRecord | null> {
+  if (activeTestMockStore?.getSavedSimulationById) {
+    return activeTestMockStore.getSavedSimulationById(userId, scenarioOrDbId);
+  }
+
+  await ensureSavedSimulationsTable();
+
+  const res = await query<any>(
+    `SELECT
+       id,
+       user_id as "userId",
+       scenario_id as "scenarioId",
+       title,
+       protocol,
+       certification,
+       difficulty,
+       scenario_json as "scenarioJson",
+       created_at as "createdAt",
+       updated_at as "updatedAt"
+     FROM saved_simulations
+     WHERE user_id = $1 AND (id = $2 OR scenario_id = $2)
+     LIMIT 1;`,
+    [userId, scenarioOrDbId]
+  );
+
+  if (!res.rows || res.rows.length === 0) return null;
+
+  const row = res.rows[0];
+  let parsedScenario: ProtocolSimulationScenario;
+  try {
+    parsedScenario = JSON.parse(row.scenarioJson);
+  } catch {
+    parsedScenario = {} as any;
+  }
+
+  return {
+    id: row.id,
+    userId: row.userId,
+    scenarioId: row.scenarioId,
+    title: row.title,
+    protocol: row.protocol,
+    certification: row.certification,
+    difficulty: row.difficulty,
+    scenario: parsedScenario,
+    createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : new Date().toISOString(),
+    updatedAt: row.updatedAt ? new Date(row.updatedAt).toISOString() : undefined,
+  };
+}
+
+/**
+ * Deletes a saved simulation with strict user ownership enforcement.
+ */
+export async function deleteSavedSimulation(
+  userId: string,
+  scenarioOrDbId: string
+): Promise<boolean> {
+  if (activeTestMockStore?.deleteSavedSimulation) {
+    return activeTestMockStore.deleteSavedSimulation(userId, scenarioOrDbId);
+  }
+
+  await ensureSavedSimulationsTable();
+
+  const res = await query(
+    `DELETE FROM saved_simulations
+     WHERE user_id = $1 AND (id = $2 OR scenario_id = $2);`,
+    [userId, scenarioOrDbId]
+  );
+
+  return (res.rowCount ?? 0) > 0;
+}
+
 
 
 

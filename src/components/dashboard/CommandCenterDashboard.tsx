@@ -1,6 +1,8 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, Badge } from '../ui';
 import { PROTOCOL_SIMULATION_CATALOG } from '../../data/simulations';
+import { fetchSavedSimulations } from '../../lib/api';
+
 import {
   Activity,
   Compass,
@@ -30,6 +32,23 @@ export const CommandCenterDashboard: React.FC<CommandCenterDashboardProps> = ({
   onNavigateToQuizzes,
   onNavigateToLibrary,
 }) => {
+  const [savedLabsCount, setSavedLabsCount] = useState<number>(0);
+
+  useEffect(() => {
+    let isMounted = true;
+    fetchSavedSimulations()
+      .then((records) => {
+        if (isMounted) {
+          setSavedLabsCount(records.length);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   // Protocol color mapping for badges
   const getProtocolBadgeVariant = (protocol: string): 'blue' | 'green' | 'amber' | 'purple' | 'slate' => {
     switch (protocol) {
@@ -60,9 +79,9 @@ export const CommandCenterDashboard: React.FC<CommandCenterDashboardProps> = ({
     {
       id: 'labs',
       title: 'Protocol Labs',
-      subtitle: '5 Live Wire Simulators',
+      subtitle: savedLabsCount > 0 ? `5 Core + ${savedLabsCount} Custom Labs` : '5 Live Wire Simulators',
       icon: <Network className="w-4 h-4 sm:w-5 sm:h-5 text-accent" />,
-      badge: '5 Sims',
+      badge: savedLabsCount > 0 ? `${5 + savedLabsCount} Sims` : '5 Sims',
       badgeVariant: 'amber' as const,
       onClick: () => onNavigateToLabs(),
     },

@@ -221,3 +221,16 @@ export interface ProtocolSimulationScenario {
 
 export type InspectedLayer = 'L2' | 'L3' | 'L4' | 'Payload';
 export type InspectorTab = 'headers' | 'nodeTables' | 'socratic';
+
+export interface SavedSimulationRecord {
+  id: string;
+  userId: string;
+  scenarioId: string;
+  title: string;
+  protocol: ProtocolFamily;
+  certification: CertificationLevel;
+  difficulty: DifficultyLevel;
+  scenario: ProtocolSimulationScenario;
+  createdAt: string;
+  updatedAt?: string;
+}

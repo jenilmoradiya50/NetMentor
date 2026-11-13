@@ -452,5 +452,35 @@ export const generationTasks = pgTable(
   }),
 );
 
+/**
+ * 17. saved_simulations
+ * User-created or AI-generated protocol simulation scenarios.
+ * Full scenario topology, packet definitions, steps, and CLI configs
+ * are stored in scenario_json.
+ */
+export const savedSimulations = pgTable(
+  'saved_simulations',
+  {
+    id: varchar('id', { length: 36 }).primaryKey(),
+    userId: varchar('user_id', { length: 36 })
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    scenarioId: varchar('scenario_id', { length: 128 }).notNull(),
+    title: varchar('title', { length: 255 }).notNull(),
+    protocol: varchar('protocol', { length: 32 }).notNull(),
+    certification: varchar('certification', { length: 32 }).notNull(),
+    difficulty: varchar('difficulty', { length: 32 }).notNull(),
+    scenarioJson: text('scenario_json').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    userIdIdx: index('saved_simulations_user_id_idx').on(table.userId),
+    userCreatedIdx: index('saved_simulations_user_created_idx').on(table.userId, table.createdAt),
+    userScenarioUnique: uniqueIndex('saved_simulations_user_scenario_unique').on(table.userId, table.scenarioId),
+  }),
+);
+
+
 
 

@@ -111,7 +111,7 @@ export const AiScenarioGeneratorModal: React.FC<AiScenarioGeneratorModalProps> =
       isOpen={isOpen}
       onClose={onClose}
       title="AI Protocol Simulation Generator"
-      subtitle="Generate interactive multi-node topologies, wire transmissions, and Cisco IOS break-fix CLI challenges"
+      subtitle="Generate interactive topologies, wire transmissions, and Cisco IOS break-fix CLI challenges — auto-saved to your library"
       maxWidth="lg"
     >
       <form onSubmit={handleGenerate} className="space-y-5 pt-1">

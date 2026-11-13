@@ -46,6 +46,8 @@ import getActiveTasksHandler from './_routes/ai/tasks/active.js';
 import createTaskHandler from './_routes/ai/tasks/create.js';
 import getTaskHandler from './_routes/ai/tasks/[id].js';
 import cancelTaskHandler from './_routes/ai/tasks/[id]/cancel.js';
+import simulationsHandler from './_routes/simulations.js';
+
 
 type RouteHandlerFn = (req: ApiRequest, res: ApiResponse) => Promise<any> | any;
 
@@ -84,6 +86,7 @@ export const STATIC_ROUTES: Record<string, RouteHandlerFn> = {
   '/api/ai/tutor': tutorHandler,
   '/api/ai/tasks/active': getActiveTasksHandler,
   '/api/ai/tasks/create': createTaskHandler,
+  '/api/simulations': simulationsHandler,
 };
 
 // 2. Dynamic Routes (Ordered strictly by specificity to prevent shadow collisions)

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useProtocolSimulation } from '../../../hooks/useProtocolSimulation';
 import { PROTOCOL_SIMULATION_CATALOG, TCP_HANDSHAKE_SCENARIO } from '../../../data/simulations';
 import type { ProtocolSimulationScenario } from '../../../types/protocol-simulation';
+import { fetchSavedSimulations, saveCustomSimulation, deleteSavedSimulation } from '../../../lib/api';
 import { TopologyVisualizer } from './TopologyVisualizer';
 import { SimulationPlaybackControls } from './SimulationPlaybackControls';
 import { PacketHeaderInspector } from './PacketHeaderInspector';
@@ -9,7 +10,8 @@ import { NodeTableInspector } from './NodeTableInspector';
 import { ProtocolCliConsole } from './ProtocolCliConsole';
 import { AiScenarioGeneratorModal } from './AiScenarioGeneratorModal';
 import { Card, Badge, Button } from '../../ui';
-import { Network, Info, Sparkles } from 'lucide-react';
+import { Network, Info, Sparkles, Trash2 } from 'lucide-react';
+
 
 export interface ProtocolExplorerViewProps {
   initialScenarioId?: string | null;
@@ -31,6 +33,7 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
   );
   const [customScenarios, setCustomScenarios] = useState<ProtocolSimulationScenario[]>([]);
   const [isGenModalOpen, setIsGenModalOpen] = useState<boolean>(false);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
   const fullCatalog = [...PROTOCOL_SIMULATION_CATALOG, ...customScenarios];
 
@@ -67,6 +70,37 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
     setScenario,
   } = useProtocolSimulation(activeScenario);
 
+  // Load persisted custom simulations from API / LocalStorage on mount
+  useEffect(() => {
+    let isMounted = true;
+    fetchSavedSimulations()
+      .then((records) => {
+        if (!isMounted) return;
+        const scenarios = records
+          .map((r) => r.scenario)
+          .filter((s): s is ProtocolSimulationScenario => Boolean(s?.metadata?.id));
+        if (scenarios.length > 0) {
+          setCustomScenarios(scenarios);
+          if (initialScenarioId) {
+            const match = scenarios.find((s) => s.metadata.id === initialScenarioId);
+            if (match) {
+              setSelectedScenarioId(match.metadata.id);
+              setScenario(match);
+              setSelectedNodeId(match.topology.nodes[0]?.id || 'host-client');
+            }
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn('[Protocol Explorer] Could not load saved simulations:', err);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [initialScenarioId, setScenario]);
+
+
   // Synchronize scenario state when initialScenarioId prop changes from parent navigation
   useEffect(() => {
     if (initialScenarioId) {
@@ -77,14 +111,54 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
         setSelectedNodeId(match.topology.nodes[0]?.id || 'host-client');
       }
     }
-  }, [initialScenarioId, selectedScenarioId, setScenario]);
+  }, [initialScenarioId, selectedScenarioId, setScenario, fullCatalog]);
 
-  const handleCustomScenarioGenerated = (newScenario: ProtocolSimulationScenario) => {
-    setCustomScenarios((prev) => [newScenario, ...prev]);
+  const handleCustomScenarioGenerated = async (newScenario: ProtocolSimulationScenario) => {
+    setCustomScenarios((prev) => [
+      newScenario,
+      ...prev.filter((s) => s.metadata.id !== newScenario.metadata.id),
+    ]);
     setSelectedScenarioId(newScenario.metadata.id);
     setScenario(newScenario);
     setSelectedNodeId(newScenario.topology.nodes[0]?.id || 'node-1');
+
+    try {
+      await saveCustomSimulation(newScenario);
+    } catch (err) {
+      console.warn('[Protocol Explorer] Failed to auto-save custom simulation:', err);
+    }
   };
+
+  const isCustomScenario = customScenarios.some((s) => s.metadata.id === selectedScenarioId);
+
+  const handleDeleteActiveScenario = async () => {
+    if (!isCustomScenario) return;
+    const confirmDelete = window.confirm(`Delete custom lab "${activeScenario.metadata.title}"?`);
+    if (!confirmDelete) return;
+
+    setIsDeleting(true);
+    try {
+      await deleteSavedSimulation(selectedScenarioId);
+      const remaining = customScenarios.filter((s) => s.metadata.id !== selectedScenarioId);
+      setCustomScenarios(remaining);
+      const fallback = PROTOCOL_SIMULATION_CATALOG[0] || TCP_HANDSHAKE_SCENARIO;
+      setSelectedScenarioId(fallback.metadata.id);
+      setScenario(fallback);
+      setSelectedNodeId(fallback.topology.nodes[0]?.id || 'host-client');
+      if (typeof window !== 'undefined') {
+        const url = new URL(window.location.href);
+        if (url.searchParams.get('tab') === 'labs') {
+          url.searchParams.set('scenario', fallback.metadata.id);
+          window.history.replaceState({}, '', url.toString());
+        }
+      }
+    } catch (err) {
+      console.error('[Protocol Explorer] Failed to delete custom simulation:', err);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
 
   if (!currentStep) return null;
 
@@ -105,6 +179,9 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
                 <Badge variant="blue">{scenario.metadata.certification}</Badge>
                 <Badge variant="amber">{scenario.metadata.protocol}</Badge>
                 <Badge variant="green">{scenario.metadata.difficulty}</Badge>
+                {isCustomScenario && (
+                  <Badge variant="purple">Saved AI Lab</Badge>
+                )}
               </div>
               <p className="text-xs text-slate-400 mt-1 max-w-2xl leading-relaxed">
                 {scenario.metadata.description}
@@ -139,13 +216,39 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
                 }}
                 className="px-3 py-2 rounded-xl bg-surface border border-border-hairline text-xs font-semibold text-white focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent min-h-[40px] max-w-[200px] sm:max-w-xs"
               >
-                {fullCatalog.map((s) => (
-                  <option key={s.metadata.id} value={s.metadata.id} className="bg-canvas text-white">
-                    {s.metadata.title}
-                  </option>
-                ))}
+                <optgroup label="Core Curriculum Labs" className="bg-canvas text-slate-400 font-semibold">
+                  {PROTOCOL_SIMULATION_CATALOG.map((s) => (
+                    <option key={s.metadata.id} value={s.metadata.id} className="bg-canvas text-white">
+                      {s.metadata.title}
+                    </option>
+                  ))}
+                </optgroup>
+                {customScenarios.length > 0 && (
+                  <optgroup label="My Saved AI Labs" className="bg-canvas text-accent font-semibold">
+                    {customScenarios.map((s) => (
+                      <option key={s.metadata.id} value={s.metadata.id} className="bg-canvas text-white">
+                        ★ {s.metadata.title}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </div>
+
+            {isCustomScenario && (
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={handleDeleteActiveScenario}
+                disabled={isDeleting}
+                icon={<Trash2 className="w-3.5 h-3.5" />}
+                className="touch-target-44 min-h-[40px]"
+                title="Delete this custom saved simulation"
+              >
+                <span className="hidden sm:inline">Delete Lab</span>
+                <span className="sm:hidden">Delete</span>
+              </Button>
+            )}
 
             <Button
               variant="secondary"

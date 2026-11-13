@@ -2,6 +2,9 @@
  * Frontend API client with credentials and CSRF mitigation headers.
  */
 
+import type { ProtocolSimulationScenario, SavedSimulationRecord } from '../types/protocol-simulation';
+
+
 export interface ApiResponse<T = any> {
   data?: T;
   error?: string;
@@ -810,6 +813,126 @@ export async function generateSimulationScenario(params: {
     body: JSON.stringify(params),
   });
 }
+
+const SAVED_SIMULATIONS_STORAGE_KEY = 'netmentor_saved_simulations';
+
+export function getLocalSavedSimulations(): SavedSimulationRecord[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(SAVED_SIMULATIONS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function setLocalSavedSimulations(records: SavedSimulationRecord[]): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(SAVED_SIMULATIONS_STORAGE_KEY, JSON.stringify(records));
+  } catch {}
+}
+
+export const simulationsApi = {
+  fetchSavedSimulations: async (options?: { isDemoMode?: boolean }): Promise<SavedSimulationRecord[]> => {
+    // If explicitly in demo mode
+    if (options?.isDemoMode) {
+      return getLocalSavedSimulations();
+    }
+
+    try {
+      const res = await fetchApi<{ success: boolean; simulations: SavedSimulationRecord[] }>('/api/simulations');
+      if (res.data?.success && Array.isArray(res.data.simulations)) {
+        // Cache to localStorage for offline / fast read
+        setLocalSavedSimulations(res.data.simulations);
+        return res.data.simulations;
+      }
+    } catch {
+      // Fallback on network or auth error
+    }
+
+    return getLocalSavedSimulations();
+  },
+
+  saveCustomSimulation: async (
+    scenario: ProtocolSimulationScenario,
+    options?: { isDemoMode?: boolean }
+  ): Promise<{ success: boolean; record: SavedSimulationRecord }> => {
+    const scenarioId = scenario.metadata.id;
+    const localRecord: SavedSimulationRecord = {
+      id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      userId: options?.isDemoMode ? 'demo-user' : 'current-user',
+      scenarioId,
+      title: scenario.metadata.title,
+      protocol: scenario.metadata.protocol,
+      certification: scenario.metadata.certification,
+      difficulty: scenario.metadata.difficulty,
+      scenario,
+      createdAt: new Date().toISOString(),
+    };
+
+    // If Demo Mode, write directly to localStorage
+    if (options?.isDemoMode) {
+      const existing = getLocalSavedSimulations().filter((s) => s.scenarioId !== scenarioId);
+      setLocalSavedSimulations([localRecord, ...existing]);
+      return { success: true, record: localRecord };
+    }
+
+    try {
+      const res = await fetchApi<{ success: boolean; simulation: SavedSimulationRecord }>('/api/simulations', {
+        method: 'POST',
+        body: JSON.stringify({ scenario }),
+      });
+
+      if (res.data?.success && res.data.simulation) {
+        const saved = res.data.simulation;
+        const existing = getLocalSavedSimulations().filter((s) => s.scenarioId !== saved.scenarioId);
+        setLocalSavedSimulations([saved, ...existing]);
+        return { success: true, record: saved };
+      }
+    } catch {
+      // Fallback
+    }
+
+    // Write-through fallback to localStorage
+    const existing = getLocalSavedSimulations().filter((s) => s.scenarioId !== scenarioId);
+    setLocalSavedSimulations([localRecord, ...existing]);
+    return { success: true, record: localRecord };
+  },
+
+  deleteSavedSimulation: async (
+    scenarioOrDbId: string,
+    options?: { isDemoMode?: boolean }
+  ): Promise<boolean> => {
+    // Update local cache immediately
+    const existing = getLocalSavedSimulations();
+    const updated = existing.filter((s) => s.id !== scenarioOrDbId && s.scenarioId !== scenarioOrDbId);
+    setLocalSavedSimulations(updated);
+
+    if (options?.isDemoMode) {
+      return true;
+    }
+
+    try {
+      const res = await fetchApi<{ success: boolean }>(
+        `/api/simulations?id=${encodeURIComponent(scenarioOrDbId)}`,
+        {
+          method: 'DELETE',
+        }
+      );
+      return Boolean(res.data?.success);
+    } catch {
+      return true;
+    }
+  },
+};
+
+export const fetchSavedSimulations = simulationsApi.fetchSavedSimulations;
+export const saveCustomSimulation = simulationsApi.saveCustomSimulation;
+export const deleteSavedSimulation = simulationsApi.deleteSavedSimulation;
+
 
 
 
