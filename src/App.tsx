@@ -7,6 +7,7 @@ import { GenerateLessonModal } from './components/library/GenerateLessonModal';
 import { Sheet } from './components/ui/Sheet';
 import { Button } from './components/ui/Button';
 import { Badge } from './components/ui/Badge';
+import { DraggableFloatingPill } from './components/ui/DraggableFloatingPill';
 import { CURRICULUM_PATHS } from './data/curriculum/curriculum-data';
 import {
   ShieldCheck,
@@ -755,33 +756,35 @@ function Dashboard() {
         </Suspense>
       </main>
 
-      {/* Opposing Bottom-Corner Floating Action Buttons */}
-      {/* Floating Dashboard Button (Bottom-Left — visible only when mainTab !== 'dashboard') */}
+      {/* Opposing Draggable Bottom-Corner Floating Action Buttons */}
+      {/* Floating Dashboard Button (Bottom-Left default — visible only when mainTab !== 'dashboard') */}
       {mainTab !== 'dashboard' && (
-        <button
-          type="button"
+        <DraggableFloatingPill
+          storageKey="netmentor_fab_dashboard"
+          defaultAlign="left"
           onClick={() => handleTabChange('dashboard')}
-          className="fixed bottom-5 left-4 z-40 pb-[env(safe-area-inset-bottom)] inline-flex items-center gap-2 px-3.5 h-11 rounded-full bg-[#111317]/95 backdrop-blur-md border border-[#232730] hover:border-amber-500/50 text-slate-100 text-xs font-medium shadow-lg shadow-black/60 touch-target-44 transition-all press-scale"
-          aria-label="Return to Command Center Dashboard"
-          title="Return to Command Center Dashboard"
+          ariaLabel="Return to Command Center Dashboard"
+          title="Return to Command Center Dashboard (Drag to reposition)"
+          className="bg-[#111317]/95 backdrop-blur-md border border-[#232730] hover:border-amber-500/50 text-slate-100 font-medium"
         >
-          <ArrowLeft className="w-4 h-4 text-amber-400" />
+          <ArrowLeft className="w-4 h-4 text-amber-400 flex-shrink-0" />
           <span>Dashboard</span>
-        </button>
+        </DraggableFloatingPill>
       )}
 
-      {/* Floating AI Tutor Button (Bottom-Right — always accessible) */}
-      <button
-        type="button"
+      {/* Floating AI Tutor Button (Bottom-Right default — always accessible) */}
+      <DraggableFloatingPill
+        storageKey="netmentor_fab_ai"
+        defaultAlign="right"
         onClick={() => openTutor()}
-        className="fixed bottom-5 right-4 z-40 pb-[env(safe-area-inset-bottom)] inline-flex items-center gap-2 px-3.5 h-11 rounded-full bg-[#111317]/95 backdrop-blur-md border border-amber-500/40 hover:border-amber-400 text-amber-400 text-xs font-semibold shadow-lg shadow-black/60 touch-target-44 transition-all press-scale"
-        aria-label="Open NetMentor AI Tutor"
-        title="Ask NetMentor AI Tutor"
+        ariaLabel="Open NetMentor AI Tutor"
+        title="Ask NetMentor AI Tutor (Drag to reposition)"
+        className="bg-[#111317]/95 backdrop-blur-md border border-amber-500/40 hover:border-amber-400 text-amber-400 font-semibold"
       >
-        <Bot className="w-4 h-4" />
-        <span className="hidden xs:inline">Ask AI</span>
-        <span className="w-2 h-2 rounded-full bg-[#F59E0B] animate-pulse" />
-      </button>
+        <Bot className="w-4 h-4 flex-shrink-0" />
+        <span>Ask AI</span>
+        <span className="w-2 h-2 rounded-full bg-[#F59E0B] animate-pulse flex-shrink-0" />
+      </DraggableFloatingPill>
 
 
 
