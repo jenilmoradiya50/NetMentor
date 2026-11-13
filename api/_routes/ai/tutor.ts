@@ -19,7 +19,7 @@ import {
   addAiMessage,
   updateAiConversationTitle,
 } from '../../_lib/db/client.js';
-import type { AiTutoringMode, AiHistoryTurn } from '../../_lib/ai/types.js';
+import type { AiTutoringMode, AiHistoryTurn, ActiveLabContext } from '../../_lib/ai/types.js';
 
 const ALLOWED_MODES: readonly AiTutoringMode[] = ['general_qa', 'lesson_qa', 'socratic_hint'] as const;
 const MAX_PAYLOAD_SIZE = 20480; // 20KB limit
@@ -99,10 +99,30 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     });
   }
 
-  const { lessonId, sectionId, exerciseId, query, history, mode, conversationId } = req.body;
+  const { lessonId, sectionId, exerciseId, query, history, mode, conversationId, labContext } = req.body;
+
+  // Validate optional labContext
+  let validatedLabContext: ActiveLabContext | undefined = undefined;
+  if (labContext !== undefined) {
+    if (!labContext || typeof labContext !== 'object' || Array.isArray(labContext)) {
+      return res.status(400).json({
+        error: 'Bad Request',
+        message: 'Parameter "labContext" must be a valid object if provided.',
+      });
+    }
+    if (typeof labContext.scenarioId !== 'string' || labContext.scenarioId.trim().length === 0) {
+      return res.status(400).json({
+        error: 'Bad Request',
+        message: 'Parameter "labContext.scenarioId" must be a non-empty string.',
+      });
+    }
+    validatedLabContext = labContext as ActiveLabContext;
+  }
 
   // Validate tutoring mode
-  const effectiveMode: AiTutoringMode = mode ? (String(mode).trim() as AiTutoringMode) : 'lesson_qa';
+  const effectiveMode: AiTutoringMode = mode
+    ? (String(mode).trim() as AiTutoringMode)
+    : (validatedLabContext ? 'general_qa' : 'lesson_qa');
   if (!ALLOWED_MODES.includes(effectiveMode)) {
     return res.status(400).json({
       error: 'Bad Request',
@@ -112,11 +132,24 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   // Validate lessonId
   const hasLessonId = typeof lessonId === 'string' && lessonId.trim().length > 0;
-  if (effectiveMode === 'lesson_qa' || effectiveMode === 'socratic_hint') {
-    if (!lessonId || typeof lessonId !== 'string' || lessonId.trim().length === 0) {
+  if (effectiveMode === 'lesson_qa') {
+    if (!hasLessonId && !validatedLabContext) {
       return res.status(400).json({
         error: 'Bad Request',
         message: 'Parameter "lessonId" is required and must be a non-empty string.',
+      });
+    }
+  } else if (effectiveMode === 'socratic_hint') {
+    if (!hasLessonId && !validatedLabContext) {
+      return res.status(400).json({
+        error: 'Bad Request',
+        message: 'Parameter "lessonId" is required and must be a non-empty string.',
+      });
+    }
+    if (hasLessonId && (!exerciseId || typeof exerciseId !== 'string' || exerciseId.trim().length === 0)) {
+      return res.status(400).json({
+        error: 'Bad Request',
+        message: 'Parameter "exerciseId" is required when mode is "socratic_hint".',
       });
     }
   } else if (effectiveMode === 'general_qa') {
@@ -151,8 +184,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     });
   }
 
-  // Validate exerciseId (Mandatory for socratic_hint mode)
-  if (effectiveMode === 'socratic_hint') {
+  // Validate exerciseId (Mandatory for curriculum socratic_hint mode)
+  if (effectiveMode === 'socratic_hint' && !validatedLabContext) {
     if (!exerciseId || typeof exerciseId !== 'string' || exerciseId.trim().length === 0) {
       return res.status(400).json({
         error: 'Bad Request',
@@ -296,6 +329,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     query: query.trim(),
     history: effectiveHistory,
     mode: effectiveMode,
+    labContext: validatedLabContext,
   });
 
   // 7. Generate Response via AI Provider
@@ -345,6 +379,14 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         lessonTitle: contextResult.context.lessonTitle,
         sectionId: contextResult.context.currentSection?.id,
         exerciseId: contextResult.context.currentExercise?.id,
+      };
+    }
+
+    if (validatedLabContext) {
+      responsePayload.labContext = {
+        scenarioId: validatedLabContext.scenarioId,
+        title: validatedLabContext.title,
+        isObjectiveSolved: validatedLabContext.isObjectiveSolved,
       };
     }
 

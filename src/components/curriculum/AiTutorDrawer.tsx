@@ -28,7 +28,9 @@ import {
   ChevronLeft,
   MessageSquare,
   Layers,
+  Terminal,
 } from 'lucide-react';
+import type { ActiveLabContext } from '../../types/protocol-simulation';
 import {
   aiApi,
   formatProviderLabel,
@@ -63,6 +65,7 @@ export interface AiTutorDrawerProps {
   onCreateLesson?: (topic: string, context?: string, conversationId?: string) => void;
   onGenerateFlashcards?: (lessonId: string) => void;
   onGenerateStandaloneFlashcards?: (topic: string) => void;
+  labContext?: ActiveLabContext | null;
 }
 
 export const AiTutorDrawer: React.FC<AiTutorDrawerProps> = ({
@@ -79,8 +82,10 @@ export const AiTutorDrawer: React.FC<AiTutorDrawerProps> = ({
   onCreateLesson,
   onGenerateFlashcards,
   onGenerateStandaloneFlashcards,
+  labContext,
 }) => {
-  const effectiveInitialMode: AiTutoringMode = initialMode ?? (lessonId ? 'lesson_qa' : 'general_qa');
+  const effectiveInitialMode: AiTutoringMode =
+    initialMode ?? (lessonId ? 'lesson_qa' : (labContext ? 'socratic_hint' : 'general_qa'));
   
   // Conversation state
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
@@ -420,6 +425,7 @@ export const AiTutorDrawer: React.FC<AiTutorDrawerProps> = ({
       query: rawQuery,
       mode,
       history: historyTurns,
+      labContext: labContext || undefined,
     };
 
     setRetryPayload(payload);
@@ -521,6 +527,8 @@ export const AiTutorDrawer: React.FC<AiTutorDrawerProps> = ({
               <p className="text-[10px] sm:text-[11px] text-slate-400 truncate">
                 {showHistory
                   ? `${conversations.length} saved conversations`
+                  : labContext
+                  ? `Simulation: ${labContext.title}`
                   : lessonTitle || 'Global Networking Mentor'}
               </p>
             </div>
@@ -717,6 +725,20 @@ export const AiTutorDrawer: React.FC<AiTutorDrawerProps> = ({
                       <span>Socratic Hint</span>
                     </button>
                   </>
+                ) : labContext ? (
+                  <button
+                    type="button"
+                    onClick={() => setMode('socratic_hint')}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg transition-all text-[11px] font-medium ${
+                      mode === 'socratic_hint'
+                        ? 'bg-accent text-white shadow-sm'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                    aria-pressed={mode === 'socratic_hint'}
+                  >
+                    <HelpCircle className="w-3 h-3" />
+                    <span>Socratic Hint</span>
+                  </button>
                 ) : null}
 
                 <button
@@ -751,12 +773,55 @@ export const AiTutorDrawer: React.FC<AiTutorDrawerProps> = ({
               )}
             </div>
 
+            {/* Active Lab Telemetry Banner */}
+            {labContext && (
+              <div className="px-4 py-2 bg-[#111317] border-b border-[#232730] flex items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-2 h-2 rounded-full bg-[#10B981] animate-pulse flex-shrink-0" />
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-mono text-[10px] font-bold text-[#F59E0B] tracking-wider uppercase">
+                        LAB TELEMETRY:
+                      </span>
+                      <span className="font-semibold text-white truncate text-[11px]">
+                        {labContext.title}
+                      </span>
+                      {labContext.isObjectiveSolved && (
+                        <Badge
+                          variant="green"
+                          size="sm"
+                          className="bg-[#10B981]/20 text-[#10B981] border-[#10B981]/40 text-[9px] py-0 px-1.5 font-mono"
+                        >
+                          ✓ SOLVED
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 text-[10px] text-slate-400 font-mono">
+                      <span className="text-[#F59E0B]/90 font-medium">{labContext.activePrompt || 'Router#'}</span>
+                      <span>•</span>
+                      <span>
+                        Step {labContext.currentStepIndex + 1}/{labContext.totalSteps}
+                      </span>
+                      {labContext.currentStepTitle && (
+                        <>
+                          <span>•</span>
+                          <span className="truncate max-w-[160px] text-slate-300">{labContext.currentStepTitle}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Context Status Notice Banner */}
             <div className="px-4 py-1.5 bg-sky-950/40 border-b border-sky-500/20 text-[11px] text-sky-200 flex items-center justify-between">
               <span className="flex items-center gap-1.5 min-w-0">
                 <Sparkles className="w-3.5 h-3.5 text-sky-400 flex-shrink-0" />
                 <span className="truncate">
-                  {mode === 'general_qa'
+                  {labContext
+                    ? `Live Telemetry Active • ${labContext.title}`
+                    : mode === 'general_qa'
                     ? 'General Mode • All CCNA & CCNP Topics'
                     : mode === 'socratic_hint'
                     ? 'Socratic Mode • Guided Inquiry Active'
@@ -892,6 +957,39 @@ export const AiTutorDrawer: React.FC<AiTutorDrawerProps> = ({
 
               <div ref={messagesEndRef} />
             </div>
+
+            {/* Lab Context Quick-Prompt Chips */}
+            {labContext && (
+              <div className="px-3 py-2 border-t border-[#232730] bg-[#090A0C] flex items-center gap-2 overflow-x-auto no-scrollbar">
+                <button
+                  type="button"
+                  onClick={() => handleSendMessage('Analyze my last CLI output')}
+                  disabled={loading}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[11px] font-medium bg-[#111317] border border-[#232730] text-slate-200 hover:text-white hover:border-[#F59E0B]/50 hover:bg-[#232730] transition-colors whitespace-nowrap min-h-[44px] touch-target-44 flex-shrink-0"
+                >
+                  <Terminal className="w-3.5 h-3.5 text-[#F59E0B]" />
+                  <span>Analyze my last CLI output</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSendMessage('What is causing this protocol fault?')}
+                  disabled={loading}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[11px] font-medium bg-[#111317] border border-[#232730] text-slate-200 hover:text-white hover:border-[#F59E0B]/50 hover:bg-[#232730] transition-colors whitespace-nowrap min-h-[44px] touch-target-44 flex-shrink-0"
+                >
+                  <AlertCircle className="w-3.5 h-3.5 text-[#F59E0B]" />
+                  <span>What is causing this protocol fault?</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSendMessage('Give me a Socratic hint (no spoilers)')}
+                  disabled={loading}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[11px] font-medium bg-[#111317] border border-[#232730] text-slate-200 hover:text-white hover:border-[#10B981]/50 hover:bg-[#232730] transition-colors whitespace-nowrap min-h-[44px] touch-target-44 flex-shrink-0"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-[#10B981]" />
+                  <span>Give me a Socratic hint (no spoilers)</span>
+                </button>
+              </div>
+            )}
 
             {/* Input Bar */}
             <div className="p-3 pb-[max(0.75rem,env(safe-area-inset-bottom,0.75rem))] border-t border-border-hairline bg-surface-subtle/90 space-y-2">

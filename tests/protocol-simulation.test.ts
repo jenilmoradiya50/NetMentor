@@ -25,6 +25,7 @@ import type {
   CertificationLevel,
   ProtocolFamily,
   DifficultyLevel,
+  ActiveLabContext,
 } from '../src/types/protocol-simulation.ts';
 import {
   validateGeneratedSimulation,
@@ -33,7 +34,14 @@ import {
   normalizeDifficultyLevel,
 } from '../api/_lib/ai/simulation-validator.js';
 import { getActiveAiProvider, MockAiProvider, __setTestAiProvider } from '../api/_lib/ai/mock-provider.js';
-import { buildSimulationGenerationPrompt } from '../api/_lib/ai/prompt-builder.js';
+import {
+  buildSimulationGenerationPrompt,
+  formatLabTelemetryContext,
+  buildTutorPrompt,
+  buildUserPrompt,
+} from '../api/_lib/ai/prompt-builder.js';
+import { createSignedSessionToken } from '../api/_lib/crypto.js';
+import tutorHandler from '../api/_routes/ai/tutor.js';
 import {
   saveCustomSimulation,
   listSavedSimulations,
@@ -891,7 +899,7 @@ async function runProtocolSimulationTests() {
       method: options.method,
       url: options.url || '/api/simulations',
       headers: options.headers || {},
-      cookies: options.cookies || {},
+      cookies: options.cookies,
       body: options.body,
       query: options.query || {},
     };
@@ -1451,6 +1459,196 @@ async function runProtocolSimulationTests() {
   assert(markRes.success === true, 'markSimulationCompleted succeeded');
   assert(markRes.scenarioId === 'bgp-best-path-selection', 'markSimulationCompleted returns scenarioId');
   assert(getCompletedSimulationIds().includes('bgp-best-path-selection'), 'markSimulationCompleted synced ID to localStorage');
+
+  // =========================================================================
+  // SECTION 12: Phase M — Live Lab Telemetry Injection into AI Tutor
+  // =========================================================================
+  console.log('\n--- Section 12: Live Lab Telemetry Injection into AI Tutor ---');
+
+  // 12.1 Format ActiveLabContext Telemetry
+  console.log('   Testing formatLabTelemetryContext Serialization & Truncation:');
+  const mockLabContext: ActiveLabContext = {
+    scenarioId: 'ospf-adjacency-mtu',
+    title: 'OSPF Adjacency & MTU Mismatch',
+    protocol: 'OSPF',
+    certification: 'CCNA',
+    difficulty: 'Intermediate',
+    objective: 'Diagnose MTU mismatch causing OSPF stuck in ExStart state.',
+    currentStepIndex: 1,
+    totalSteps: 4,
+    currentStepTitle: 'Verify MTU configuration on router interfaces',
+    activeCliNodeId: 'r1-edge',
+    activeCliNodeName: 'R1-Edge',
+    activePrompt: 'R1-Edge#',
+    isObjectiveSolved: false,
+    recentCliCommands: [
+      { prompt: 'R1-Edge#', command: 'show ip ospf neighbor', outputSummary: 'Neighbor 2.2.2.2 in EXSTART' },
+      { prompt: 'R1-Edge#', command: 'show ip interface GigabitEthernet0/0', outputSummary: 'MTU 1500 bytes, BW 1000000 Kbit' },
+    ],
+    activeNodeTablesSummary: {
+      ospfNeighbors: '1 neighbors (2.2.2.2:EXSTART)',
+      routingTable: '3 routes',
+      arpCache: '2 entries',
+      macTable: '4 dynamic entries',
+      tcpState: 'ESTABLISHED',
+    },
+  };
+
+  const formattedTelemetry = formatLabTelemetryContext(mockLabContext);
+  assert(formattedTelemetry.includes('=== [ACTIVE PROTOCOL LAB TELEMETRY] ==='), 'Telemetry header present');
+  assert(formattedTelemetry.includes('OSPF Adjacency & MTU Mismatch'), 'Telemetry includes scenario title');
+  assert(formattedTelemetry.includes('OSPF | CCNA | Intermediate'), 'Telemetry includes protocol, cert, and difficulty');
+  assert(formattedTelemetry.includes('Lab Objective: Diagnose MTU mismatch'), 'Telemetry includes objective');
+  assert(formattedTelemetry.includes('Investigation Step: Step 2 of 4 - Verify MTU configuration'), 'Telemetry includes current step');
+  assert(formattedTelemetry.includes('Objective Status: IN_PROGRESS (Fault unresolved)'), 'Telemetry flags in-progress status');
+  assert(formattedTelemetry.includes('Active Inspection Node: R1-Edge (CLI Prompt: "R1-Edge#")'), 'Telemetry includes node and prompt');
+  assert(formattedTelemetry.includes('R1-Edge# show ip ospf neighbor'), 'Telemetry renders recent CLI command');
+  assert(formattedTelemetry.includes('[Output]: Neighbor 2.2.2.2 in EXSTART'), 'Telemetry renders CLI command output');
+  assert(formattedTelemetry.includes('OSPF Neighbors: 1 neighbors (2.2.2.2:EXSTART)'), 'Telemetry renders OSPF table summary');
+  assert(formattedTelemetry.includes('Routing Table: 3 routes'), 'Telemetry renders routing table summary');
+  assert(formattedTelemetry.includes('CRITICAL MENTOR GUIDELINE'), 'Telemetry contains critical Socratic mentor instructions');
+
+  // Solved state formatting
+  const solvedLabContext: ActiveLabContext = {
+    ...mockLabContext,
+    isObjectiveSolved: true,
+  };
+  const solvedFormatted = formatLabTelemetryContext(solvedLabContext);
+  assert(solvedFormatted.includes('Objective Status: SOLVED (Target achieved)'), 'Solved state formats correctly');
+
+  // Output truncation test (>250 characters truncated with ...)
+  const longOutputLabContext: ActiveLabContext = {
+    ...mockLabContext,
+    recentCliCommands: [
+      {
+        prompt: 'R1#',
+        command: 'show tech-support',
+        outputSummary: 'X'.repeat(400),
+      },
+    ],
+  };
+  const truncatedFormatted = formatLabTelemetryContext(longOutputLabContext);
+  assert(truncatedFormatted.includes('...'), 'Overly long command outputs are safely truncated with ellipsis');
+  assert(!truncatedFormatted.includes('X'.repeat(260)), 'Excess characters beyond boundary are pruned');
+
+  // Empty commands handled gracefully
+  const emptyCmdLabContext: ActiveLabContext = {
+    ...mockLabContext,
+    recentCliCommands: [],
+    activeNodeTablesSummary: undefined,
+  };
+  const emptyFormatted = formatLabTelemetryContext(emptyCmdLabContext);
+  assert(emptyFormatted.includes('(No CLI commands executed yet)'), 'Empty CLI command history handled cleanly');
+
+  // 12.2 User Prompt & Tutor Prompt Assembly
+  console.log('   Testing buildUserPrompt & buildTutorPrompt with Lab Telemetry:');
+  const userPromptWithLab = buildUserPrompt({
+    query: 'Analyze my last CLI output',
+    labContext: mockLabContext,
+  });
+  assert(userPromptWithLab.includes('=== [ACTIVE PROTOCOL LAB TELEMETRY] ==='), 'User prompt integrates lab telemetry block');
+  assert(userPromptWithLab.includes('<learner_query>'), 'User prompt wraps query in learner_query boundary');
+  assert(userPromptWithLab.includes('Analyze my last CLI output'), 'User prompt includes raw query');
+
+  const tutorPromptPackage = buildTutorPrompt({
+    query: 'What is causing this protocol fault?',
+    labContext: mockLabContext,
+  });
+  assert(tutorPromptPackage.systemPrompt.includes('SOCRATIC EXERCISE MODE'), 'buildTutorPrompt enables Socratic mode when lab is in-progress');
+  assert(tutorPromptPackage.userPrompt.includes('=== [ACTIVE PROTOCOL LAB TELEMETRY] ==='), 'Tutor prompt package embeds telemetry in userPrompt');
+
+  // 12.3 AI Tutor Route with labContext Telemetry
+  console.log('   Testing /api/ai/tutor Integration with Lab Telemetry:');
+  const { token: testTutorToken, payload: testTutorPayload } = createSignedSessionToken('user-sim-student', 'user');
+  __setTestMockStore({
+    validateDbSession: async (sessionId: string) => {
+      if (sessionId === testTutorPayload.jti) {
+        return {
+          valid: true,
+          userId: 'user-sim-student',
+          currentRole: 'user',
+          userStatus: 'active',
+        };
+      }
+      return { valid: false };
+    },
+  });
+
+  const { req: labTutorReq, res: labTutorRes } = createMockReqRes({
+    method: 'POST',
+    url: '/api/ai/tutor',
+    headers: {
+      cookie: `netmentor_session=${testTutorToken}`,
+      'x-netmentor-request': '1',
+    },
+    body: {
+      query: 'Analyze my last CLI output',
+      labContext: mockLabContext,
+    },
+  });
+  await tutorHandler(labTutorReq, labTutorRes);
+  assert(labTutorRes.getStatus() === 200, 'POST /api/ai/tutor with labContext returned HTTP 200 OK');
+  const tutorData = labTutorRes.getData();
+  assert(tutorData?.success === true, 'Tutor response success is true');
+  assert(tutorData?.labContext?.scenarioId === 'ospf-adjacency-mtu', 'Response echoes back labContext scenarioId');
+  assert(tutorData?.labContext?.isObjectiveSolved === false, 'Response echoes back isObjectiveSolved');
+  assert(
+    Boolean(
+      tutorData?.answer &&
+        (tutorData.answer.includes('EXSTART') ||
+         tutorData.answer.includes('Live CLI Telemetry Analysis') ||
+         tutorData.answer.includes('show ip ospf neighbor'))
+    ),
+    'Tutor returns CLI-grounded telemetry analysis'
+  );
+
+  // Test Socratic prompt chip
+  const { req: socraticChipReq, res: socraticChipRes } = createMockReqRes({
+    method: 'POST',
+    url: '/api/ai/tutor',
+    headers: {
+      cookie: `netmentor_session=${testTutorToken}`,
+      'x-netmentor-request': '1',
+    },
+    body: {
+      query: 'Give me a Socratic hint (no spoilers)',
+      mode: 'socratic_hint',
+      labContext: mockLabContext,
+    },
+  });
+  await tutorHandler(socraticChipReq, socraticChipRes);
+  assert(socraticChipRes.getStatus() === 200, 'Socratic hint request with labContext returns HTTP 200');
+  assert(
+    Boolean(
+      socraticChipRes.getData()?.answer &&
+        (socraticChipRes.getData().answer.includes('Socratic') ||
+         socraticChipRes.getData().answer.includes('MTU') ||
+         socraticChipRes.getData().answer.includes('EXSTART') ||
+         socraticChipRes.getData().answer.includes('neighbor') ||
+         socraticChipRes.getData().answer.includes('discrepanc'))
+    ),
+    'Socratic hint returns guided inquiry response'
+  );
+
+  // Test malformed labContext (missing scenarioId) returns 400
+  const { req: badLabReq, res: badLabRes } = createMockReqRes({
+    method: 'POST',
+    url: '/api/ai/tutor',
+    headers: {
+      cookie: `netmentor_session=${testTutorToken}`,
+      'x-netmentor-request': '1',
+    },
+    body: {
+      query: 'What is this?',
+      labContext: {
+        title: 'Broken Context',
+      },
+    },
+  });
+  await tutorHandler(badLabReq, badLabRes);
+  assert(badLabRes.getStatus() === 400, 'POST /api/ai/tutor with malformed labContext returns HTTP 400');
+
+  __setTestMockStore(null);
 
 
   console.log('\n=============================================================');

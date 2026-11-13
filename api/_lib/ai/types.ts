@@ -104,6 +104,38 @@ export interface GroundedContextError {
 
 export type GroundedContextResult = GroundedContextSuccess | GroundedContextError;
 
+export interface ActiveLabCliEntry {
+  prompt: string;
+  command: string;
+  outputSummary: string;
+}
+
+export interface ActiveLabTablesSummary {
+  ospfNeighbors?: string;
+  routingTable?: string;
+  arpCache?: string;
+  macTable?: string;
+  tcpState?: string;
+}
+
+export interface ActiveLabContext {
+  scenarioId: string;
+  title: string;
+  protocol: string;
+  certification: string;
+  difficulty: string;
+  objective?: string;
+  currentStepIndex: number;
+  totalSteps: number;
+  currentStepTitle?: string;
+  activeCliNodeId?: string;
+  activeCliNodeName?: string;
+  activePrompt?: string;
+  isObjectiveSolved: boolean;
+  recentCliCommands: ActiveLabCliEntry[];
+  activeNodeTablesSummary?: ActiveLabTablesSummary;
+}
+
 /**
  * Inbound request parameters to the tutor.
  */
@@ -115,6 +147,7 @@ export interface TutorLessonRequest {
   history?: AiHistoryTurn[];
   mode?: AiTutoringMode;
   conversationId?: string;
+  labContext?: ActiveLabContext;
 }
 
 export interface SocraticHintRequest {

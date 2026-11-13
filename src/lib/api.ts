@@ -2,7 +2,11 @@
  * Frontend API client with credentials and CSRF mitigation headers.
  */
 
-import type { ProtocolSimulationScenario, SavedSimulationRecord } from '../types/protocol-simulation';
+import type {
+  ProtocolSimulationScenario,
+  SavedSimulationRecord,
+  ActiveLabContext,
+} from '../types/protocol-simulation';
 
 
 export interface ApiResponse<T = any> {
@@ -265,6 +269,7 @@ export interface AiTutorRequestPayload {
   mode?: 'general_qa' | 'lesson_qa' | 'socratic_hint';
   history?: Array<{ role: 'user' | 'assistant'; content: string }>;
   conversationId?: string;
+  labContext?: ActiveLabContext;
 }
 
 export interface AiTutorResponsePayload {

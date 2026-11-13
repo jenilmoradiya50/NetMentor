@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { AiTutorProvider, useAiTutor } from './context/AiTutorContext';
 import { AiTutorDrawer } from './components/curriculum/AiTutorDrawer';
+import type { ActiveLabContext } from './types/protocol-simulation';
 import {
   generatedLessonsApi,
   type GeneratedLessonDetail,
@@ -298,6 +299,14 @@ function Dashboard() {
   }, [registerResultViewer]);
 
   const [isMobileAccountOpen, setIsMobileAccountOpen] = useState(false);
+  const [activeLabContext, setActiveLabContext] = useState<ActiveLabContext | null>(null);
+
+  // Clear lab context when leaving labs tab
+  useEffect(() => {
+    if (mainTab !== 'labs') {
+      setActiveLabContext(null);
+    }
+  }, [mainTab]);
 
   // Synchronize browser history and hardware back buttons
   useEffect(() => {
@@ -754,7 +763,10 @@ function Dashboard() {
               />
             )
           ) : mainTab === 'labs' ? (
-            <PacketTracerLabsView targetScenarioId={targetLabScenarioId} />
+            <PacketTracerLabsView
+              targetScenarioId={targetLabScenarioId}
+              onLabContextChange={setActiveLabContext}
+            />
           ) : mainTab === 'library' ? (
             selectedGeneratedLesson ? (
               <GeneratedLessonReader
@@ -904,6 +916,7 @@ function Dashboard() {
         initialMode={aiTutorMode}
         initialPrompt={initialPrompt}
         onClearInitialPrompt={() => setInitialPrompt(undefined)}
+        labContext={activeLabContext}
         onCreateLesson={(topic, context, convId) => {
           setCreateLessonParams({
             initialTopic: topic,

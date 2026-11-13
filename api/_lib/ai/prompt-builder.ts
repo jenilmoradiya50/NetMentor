@@ -11,6 +11,7 @@ import type {
   AiHistoryTurn,
   AiTutoringMode,
   GenerateLessonRequestParams,
+  ActiveLabContext,
 } from './types.js';
 
 export const MAX_USER_QUERY_LENGTH = 600;
@@ -138,6 +139,70 @@ export function buildSystemPrompt(
 }
 
 /**
+ * Safely formats live ActiveLabContext telemetry into a structured block for the AI prompt.
+ */
+export function formatLabTelemetryContext(lab: ActiveLabContext): string {
+  const parts: string[] = [];
+  parts.push('=== [ACTIVE PROTOCOL LAB TELEMETRY] ===');
+  parts.push(`Scenario: ${lab.title || lab.scenarioId} (${lab.protocol} | ${lab.certification} | ${lab.difficulty})`);
+  if (lab.objective) {
+    parts.push(`Lab Objective: ${lab.objective}`);
+  }
+  parts.push(
+    `Investigation Step: Step ${lab.currentStepIndex + 1} of ${lab.totalSteps}${
+      lab.currentStepTitle ? ` - ${lab.currentStepTitle}` : ''
+    }`
+  );
+  parts.push(
+    `Objective Status: ${lab.isObjectiveSolved ? 'SOLVED (Target achieved)' : 'IN_PROGRESS (Fault unresolved)'}`
+  );
+  parts.push(
+    `Active Inspection Node: ${lab.activeCliNodeName || lab.activeCliNodeId || 'Node'} (CLI Prompt: "${
+      lab.activePrompt || 'Router#'
+    }")`
+  );
+
+  // Recent CLI commands
+  if (Array.isArray(lab.recentCliCommands) && lab.recentCliCommands.length > 0) {
+    parts.push('');
+    parts.push('Recent CLI Execution History (Last 6 Commands):');
+    const recent = lab.recentCliCommands.slice(-6);
+    for (const cmd of recent) {
+      parts.push(`  ${cmd.prompt} ${cmd.command}`);
+      if (cmd.outputSummary) {
+        const truncatedOutput =
+          cmd.outputSummary.length > 250
+            ? cmd.outputSummary.slice(0, 247) + '...'
+            : cmd.outputSummary;
+        parts.push(`    [Output]: ${truncatedOutput.replace(/\n/g, '\n    ')}`);
+      }
+    }
+  } else {
+    parts.push('');
+    parts.push('Recent CLI Execution History: (No CLI commands executed yet)');
+  }
+
+  // Active Node Tables Summary
+  if (lab.activeNodeTablesSummary) {
+    const tbl = lab.activeNodeTablesSummary;
+    parts.push('');
+    parts.push('Active Node Live Protocol State:');
+    if (tbl.ospfNeighbors) parts.push(`  - OSPF Neighbors: ${tbl.ospfNeighbors}`);
+    if (tbl.routingTable) parts.push(`  - Routing Table: ${tbl.routingTable}`);
+    if (tbl.arpCache) parts.push(`  - ARP Cache: ${tbl.arpCache}`);
+    if (tbl.macTable) parts.push(`  - MAC Table: ${tbl.macTable}`);
+    if (tbl.tcpState) parts.push(`  - TCP State: ${tbl.tcpState}`);
+  }
+
+  parts.push('');
+  parts.push(
+    '[CRITICAL MENTOR GUIDELINE: Ground your response in the student\'s recent CLI output and active node state. Ask targeted Socratic questions pointing them to anomalies or discrepancies in their configuration or protocol state. Do not immediately hand them the exact fix command unless they explicitly ask for the direct answer.]'
+  );
+
+  return parts.join('\n');
+}
+
+/**
  * Builds the user prompt containing grounded lesson context (or general networking domain),
  * active section/exercise metadata, and the delimited learner query.
  */
@@ -145,11 +210,18 @@ export function buildUserPrompt(params: {
   context?: GroundedLessonContext | null;
   query: string;
   mode?: AiTutoringMode;
+  labContext?: ActiveLabContext | null;
 }): string {
-  const { context, query } = params;
+  const { context, query, labContext } = params;
   const sanitizedQuery = sanitizeUntrustedInput(query, MAX_USER_QUERY_LENGTH);
 
   const parts: string[] = [];
+
+  // 0. Active Lab Telemetry (if inside Protocol Explorer simulation)
+  if (labContext) {
+    parts.push(formatLabTelemetryContext(labContext));
+    parts.push('');
+  }
 
   if (context) {
     // 1. Lesson Header & Hierarchy
@@ -242,6 +314,7 @@ export function buildTutorPrompt(params: {
   query: string;
   history?: AiHistoryTurn[];
   mode?: AiTutoringMode;
+  labContext?: ActiveLabContext | null;
 }): {
   systemPrompt: string;
   userPrompt: string;
@@ -249,18 +322,19 @@ export function buildTutorPrompt(params: {
 } {
   const mode =
     params.mode ??
-    (params.context?.currentExercise
+    (params.context?.currentExercise || (params.labContext && !params.labContext.isObjectiveSolved)
       ? 'socratic_hint'
       : params.context
       ? 'lesson_qa'
       : 'general_qa');
-  const hasActiveExercise = Boolean(params.context?.currentExercise);
+  const hasActiveExercise = Boolean(params.context?.currentExercise || params.labContext);
 
   const systemPrompt = buildSystemPrompt(mode, hasActiveExercise);
   const userPrompt = buildUserPrompt({
     context: params.context,
     query: params.query,
     mode,
+    labContext: params.labContext,
   });
   const history = sanitizeHistory(params.history);
 

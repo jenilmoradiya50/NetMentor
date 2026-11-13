@@ -1,7 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useProtocolSimulation } from '../../../hooks/useProtocolSimulation';
 import { PROTOCOL_SIMULATION_CATALOG, TCP_HANDSHAKE_SCENARIO } from '../../../data/simulations';
-import type { ProtocolSimulationScenario } from '../../../types/protocol-simulation';
+import type {
+  ProtocolSimulationScenario,
+  ActiveLabContext,
+  ActiveLabCliEntry,
+  ActiveLabTablesSummary,
+} from '../../../types/protocol-simulation';
 import {
   fetchSavedSimulations,
   saveCustomSimulation,
@@ -22,10 +27,12 @@ import { Network, Info, Sparkles, Trash2 } from 'lucide-react';
 
 export interface ProtocolExplorerViewProps {
   initialScenarioId?: string | null;
+  onLabContextChange?: (context: ActiveLabContext | null) => void;
 }
 
 export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
   initialScenarioId,
+  onLabContextChange,
 }) => {
   const initialScenario =
     (initialScenarioId &&
@@ -142,6 +149,108 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
       }
     }
   }, [isObjectiveSolved, scenario.metadata, completedScenarioIds]);
+
+  // Compute live active node protocol state and recent CLI history for telemetry
+  const activeNode =
+    computedTopology?.nodes?.find((n) => n.id === activeCliNodeId) ||
+    computedTopology?.nodes?.find((n) => n.id === selectedNodeId) ||
+    computedTopology?.nodes?.[0];
+
+  const activeNodeTablesSummary: ActiveLabTablesSummary | undefined = activeNode
+    ? {
+        ospfNeighbors: activeNode.tableState?.ospfNeighbors?.length
+          ? `${activeNode.tableState.ospfNeighbors.length} neighbors (${activeNode.tableState.ospfNeighbors
+              .map((n) => `${n.neighborId}:${n.state}`)
+              .join(', ')})`
+          : undefined,
+        routingTable: activeNode.tableState?.routingTable?.length
+          ? `${activeNode.tableState.routingTable.length} routes`
+          : undefined,
+        arpCache: activeNode.tableState?.arpCache?.length
+          ? `${activeNode.tableState.arpCache.length} entries`
+          : undefined,
+        macTable: activeNode.tableState?.macTable?.length
+          ? `${activeNode.tableState.macTable.length} dynamic entries`
+          : undefined,
+        tcpState: activeNode.tableState?.tcpState || undefined,
+      }
+    : undefined;
+
+  const parsedCliCommands: ActiveLabCliEntry[] = [];
+  for (let i = 0; i < (cliHistory || []).length; i++) {
+    const entry = cliHistory[i];
+    if (entry.type === 'input') {
+      const spaceIdx = entry.text.indexOf(' ');
+      const prompt = spaceIdx > 0 ? entry.text.slice(0, spaceIdx) : 'Router#';
+      const command = spaceIdx > 0 ? entry.text.slice(spaceIdx + 1) : entry.text;
+      const nextEntry = cliHistory[i + 1];
+      const outputText =
+        nextEntry && (nextEntry.type === 'output' || nextEntry.type === 'error') ? nextEntry.text : '';
+      const outputSummary =
+        outputText.length > 250 ? outputText.slice(0, 247) + '...' : outputText;
+      parsedCliCommands.push({
+        prompt,
+        command,
+        outputSummary,
+      });
+    }
+  }
+  const recentCliCommands: ActiveLabCliEntry[] = parsedCliCommands.slice(-6);
+
+  // Emit live ActiveLabContext telemetry to parent whenever lab state evolves
+  useEffect(() => {
+    if (!onLabContextChange) return;
+
+    const labCtx: ActiveLabContext = {
+      scenarioId: activeScenario.metadata.id,
+      title: activeScenario.metadata.title,
+      protocol: activeScenario.metadata.protocol,
+      certification: activeScenario.metadata.certification,
+      difficulty: activeScenario.metadata.difficulty,
+      objective: activeScenario.metadata.description || activeScenario.steps?.[0]?.explanation,
+      currentStepIndex,
+      totalSteps,
+      currentStepTitle: currentStep?.title,
+      activeCliNodeId: activeNode?.id || activeCliNodeId,
+      activeCliNodeName: activeNode?.name || promptHostname,
+      activePrompt,
+      isObjectiveSolved,
+      recentCliCommands,
+      activeNodeTablesSummary,
+    };
+
+    onLabContextChange(labCtx);
+  }, [
+    onLabContextChange,
+    activeScenario.metadata.id,
+    activeScenario.metadata.title,
+    activeScenario.metadata.protocol,
+    activeScenario.metadata.certification,
+    activeScenario.metadata.difficulty,
+    activeScenario.metadata.description,
+    currentStepIndex,
+    totalSteps,
+    currentStep?.title,
+    activeNode?.id,
+    activeNode?.name,
+    activeCliNodeId,
+    promptHostname,
+    activePrompt,
+    isObjectiveSolved,
+    cliHistory.length,
+    activeNodeTablesSummary?.ospfNeighbors,
+    activeNodeTablesSummary?.routingTable,
+    activeNodeTablesSummary?.arpCache,
+    activeNodeTablesSummary?.macTable,
+    activeNodeTablesSummary?.tcpState,
+  ]);
+
+  // Emit null on unmount
+  useEffect(() => {
+    return () => {
+      onLabContextChange?.(null);
+    };
+  }, [onLabContextChange]);
 
 
   // Synchronize scenario state when initialScenarioId prop changes from parent navigation

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import type { CatalogLab } from '../../types/flashcards';
+import type { ActiveLabContext } from '../../types/protocol-simulation';
 import { labsApi } from '../../lib/api';
 import { JEREMY_PACKET_TRACER_LABS } from '../../data/catalog';
 import { Card, Badge } from '../ui';
@@ -19,10 +20,12 @@ export type LabsViewTab = 'explorer' | 'pkt-catalog';
 
 export interface PacketTracerLabsViewProps {
   targetScenarioId?: string | null;
+  onLabContextChange?: (context: ActiveLabContext | null) => void;
 }
 
 export const PacketTracerLabsView: React.FC<PacketTracerLabsViewProps> = ({
   targetScenarioId,
+  onLabContextChange,
 }) => {
   const [activeTab, setActiveTab] = useState<LabsViewTab>('explorer');
   const [labs, setLabs] = useState<CatalogLab[]>(JEREMY_PACKET_TRACER_LABS);
@@ -101,7 +104,10 @@ export const PacketTracerLabsView: React.FC<PacketTracerLabsViewProps> = ({
 
       {/* Main Tab Content */}
       {activeTab === 'explorer' ? (
-        <ProtocolExplorerView initialScenarioId={targetScenarioId} />
+        <ProtocolExplorerView
+          initialScenarioId={targetScenarioId}
+          onLabContextChange={onLabContextChange}
+        />
       ) : (
         <div className="space-y-6">
           {/* Header Banner */}

@@ -284,7 +284,24 @@ export class MockAiProvider implements AiProviderClient {
 
     let text: string;
 
-    if (isSocratic && asksForDirectAnswer) {
+    if (userPrompt.includes('[ACTIVE PROTOCOL LAB TELEMETRY]')) {
+      if (isSocratic && asksForDirectAnswer) {
+        text =
+          '[NetMentor Simulated Tutor] As your network mentor, I cannot reveal the direct answer or remediation command for this break-fix challenge. Let\'s reason through the telemetry: inspect your active node\'s show command outputs and compare them with the adjacent peer\'s state.';
+      } else if (query.includes('analyze my last cli output') || query.includes('cli output')) {
+        text =
+          '[NetMentor Simulated Tutor] ### Live CLI Telemetry Analysis\n\nLooking at your recent CLI output and active node configuration:\n\n- Notice the state transitions in your terminal. Examine whether the interface MTU or subnet mask parameters match between the adjacent peers.\n- If diagnosing OSPF or BGP, verify if the neighbor IP and local Autonomous System number match what the adjacent router expects.\n\n```ios\nshow ip interface brief\nshow ip ospf neighbor\n```\nWhat discrepancies do you observe in the dead timer or interface MTU values?';
+      } else if (query.includes('protocol fault') || query.includes('causing')) {
+        text =
+          '[NetMentor Simulated Tutor] ### Protocol Fault Root-Cause Investigation\n\nBased on your active node telemetry and current topology step:\n\n- Trace the Layer 2 and Layer 3 handshake hop-by-hop (Packet Walk First rule).\n- Verify if an MTU mismatch, mismatched VLAN encapsulation (`encapsulation dot1Q`), or missing default route is preventing protocol convergence.\n\nCheck your active node\'s running configuration and routing table to isolate the mismatch.';
+      } else if (query.includes('socratic') || query.includes('hint') || isSocratic) {
+        text =
+          '[NetMentor Simulated Tutor] ### Socratic Lab Troubleshooting Hint\n\nLet\'s isolate the root cause methodically without spoiling the solution:\n\n1. Compare the interface settings on your active node against the connected neighbor in the visualizer.\n2. Ask yourself: what specific requirement must be identical for this protocol to transition to `FULL` or `ESTABLISHED`?\n3. Run a targeted `show` command on the active node to inspect the specific configuration line.';
+      } else {
+        text =
+          '[NetMentor Simulated Tutor] Grounded in your active lab session, examine the current topology step and active node table state. Use the CLI to verify connectivity and isolate anomalies.';
+      }
+    } else if (isSocratic && asksForDirectAnswer) {
       text =
         '[NetMentor Simulated Tutor] As your network mentor, I cannot reveal the direct answer to this challenge. Let\'s reason through the protocol mechanism together: what does the underlying standard or RFC state about this behavior? Check the clues provided and consider which constraint eliminates the distractor options.';
     } else if (query.includes('ttl') || userPrompt.includes('Time-To-Live') || userPrompt.includes('packet-walk')) {
