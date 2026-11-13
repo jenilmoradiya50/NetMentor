@@ -481,6 +481,28 @@ export const savedSimulations = pgTable(
   }),
 );
 
+/**
+ * 18. simulation_completions
+ * Tracks solved CLI break-fix lab completions per user.
+ */
+export const simulationCompletions = pgTable(
+  'simulation_completions',
+  {
+    id: varchar('id', { length: 36 }).primaryKey(),
+    userId: varchar('user_id', { length: 36 })
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    scenarioId: varchar('scenario_id', { length: 128 }).notNull(),
+    protocol: varchar('protocol', { length: 32 }).notNull(),
+    certification: varchar('certification', { length: 32 }).notNull(),
+    completedAt: timestamp('completed_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    userIdIdx: index('simulation_completions_user_id_idx').on(table.userId),
+    userScenarioUnique: uniqueIndex('simulation_completions_user_scenario_unique').on(table.userId, table.scenarioId),
+  }),
+);
+
 
 
 

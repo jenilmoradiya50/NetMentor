@@ -815,6 +815,42 @@ export async function generateSimulationScenario(params: {
 }
 
 const SAVED_SIMULATIONS_STORAGE_KEY = 'netmentor_saved_simulations';
+const COMPLETED_SIMULATIONS_STORAGE_KEY = 'netmentor_completed_simulations';
+
+export interface SimulationCompletionRecord {
+  id: string;
+  userId: string;
+  scenarioId: string;
+  protocol: string;
+  certification: string;
+  completedAt: string;
+}
+
+export function getCompletedSimulationIds(): string[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(COMPLETED_SIMULATIONS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function setCompletedSimulationIds(ids: string[]): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(COMPLETED_SIMULATIONS_STORAGE_KEY, JSON.stringify(Array.from(new Set(ids))));
+  } catch {}
+}
+
+export function addCompletedSimulationId(id: string): void {
+  const current = getCompletedSimulationIds();
+  if (!current.includes(id)) {
+    setCompletedSimulationIds([...current, id]);
+  }
+}
 
 export function getLocalSavedSimulations(): SavedSimulationRecord[] {
   if (typeof localStorage === 'undefined') return [];
@@ -927,11 +963,69 @@ export const simulationsApi = {
       return true;
     }
   },
+
+  fetchCompletedSimulations: async (options?: { isDemoMode?: boolean }): Promise<string[]> => {
+    const localIds = getCompletedSimulationIds();
+    if (options?.isDemoMode) {
+      return localIds;
+    }
+
+    try {
+      const res = await fetchApi<{ success: boolean; completions: SimulationCompletionRecord[] }>(
+        '/api/simulations?resource=completions'
+      );
+      if (res.data?.success && Array.isArray(res.data.completions)) {
+        const remoteIds = res.data.completions.map((c) => c.scenarioId);
+        const merged = Array.from(new Set([...localIds, ...remoteIds]));
+        setCompletedSimulationIds(merged);
+        return merged;
+      }
+    } catch {
+      // Fallback to local storage
+    }
+
+    return localIds;
+  },
+
+  markSimulationCompleted: async (
+    params: { scenarioId: string; protocol?: string; certification?: string },
+    options?: { isDemoMode?: boolean }
+  ): Promise<{ success: boolean; scenarioId: string }> => {
+    addCompletedSimulationId(params.scenarioId);
+
+    if (options?.isDemoMode) {
+      return { success: true, scenarioId: params.scenarioId };
+    }
+
+    try {
+      const res = await fetchApi<{ success: boolean; completion: SimulationCompletionRecord }>(
+        '/api/simulations',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            action: 'complete',
+            scenarioId: params.scenarioId,
+            protocol: params.protocol || 'OSPF',
+            certification: params.certification || 'CCNA',
+          }),
+        }
+      );
+      if (res.data?.success) {
+        return { success: true, scenarioId: params.scenarioId };
+      }
+    } catch {
+      // Fallback
+    }
+
+    return { success: true, scenarioId: params.scenarioId };
+  },
 };
 
 export const fetchSavedSimulations = simulationsApi.fetchSavedSimulations;
 export const saveCustomSimulation = simulationsApi.saveCustomSimulation;
 export const deleteSavedSimulation = simulationsApi.deleteSavedSimulation;
+export const fetchCompletedSimulations = simulationsApi.fetchCompletedSimulations;
+export const markSimulationCompleted = simulationsApi.markSimulationCompleted;
 
 
 

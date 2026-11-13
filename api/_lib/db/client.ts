@@ -67,6 +67,8 @@ interface TestMockStore {
   listSavedSimulations?: (userId: string) => Promise<any[]>;
   getSavedSimulationById?: (userId: string, scenarioOrDbId: string) => Promise<any>;
   deleteSavedSimulation?: (userId: string, scenarioOrDbId: string) => Promise<boolean>;
+  markSimulationCompleted?: (userId: string, scenarioId: string, protocol: string, certification: string) => Promise<any>;
+  listSimulationCompletions?: (userId: string) => Promise<any[]>;
 }
 
 let activeTestMockStore: TestMockStore | null = null;
@@ -3540,6 +3542,119 @@ export async function deleteSavedSimulation(
   );
 
   return (res.rowCount ?? 0) > 0;
+}
+
+export interface SimulationCompletionRecord {
+  id: string;
+  userId: string;
+  scenarioId: string;
+  protocol: string;
+  certification: string;
+  completedAt: string;
+}
+
+let simulationCompletionsTableEnsured = false;
+
+export async function ensureSimulationCompletionsTable(): Promise<void> {
+  if (simulationCompletionsTableEnsured) return;
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS "simulation_completions" (
+        "id" varchar(36) PRIMARY KEY NOT NULL,
+        "user_id" varchar(36) NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+        "scenario_id" varchar(128) NOT NULL,
+        "protocol" varchar(32) NOT NULL,
+        "certification" varchar(32) NOT NULL,
+        "completed_at" timestamp with time zone DEFAULT now() NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS "simulation_completions_user_id_idx" ON "simulation_completions" ("user_id");
+      CREATE UNIQUE INDEX IF NOT EXISTS "simulation_completions_user_scenario_unique" ON "simulation_completions" ("user_id", "scenario_id");
+    `);
+    simulationCompletionsTableEnsured = true;
+  } catch (err: any) {
+    console.error('[Simulation Completions DB Init Warning]:', err?.message);
+  }
+}
+
+/**
+ * Marks a CLI break-fix protocol simulation as solved/completed for a user.
+ * Idempotently updates the record if already completed.
+ */
+export async function markSimulationCompleted(
+  userId: string,
+  scenarioId: string,
+  protocol: string,
+  certification: string
+): Promise<SimulationCompletionRecord> {
+  if (activeTestMockStore?.markSimulationCompleted) {
+    return activeTestMockStore.markSimulationCompleted(userId, scenarioId, protocol, certification);
+  }
+
+  await ensureSimulationCompletionsTable();
+
+  const id = crypto.randomUUID();
+  const res = await query<any>(
+    `INSERT INTO simulation_completions
+     (id, user_id, scenario_id, protocol, certification, completed_at)
+     VALUES ($1, $2, $3, $4, $5, NOW())
+     ON CONFLICT ("user_id", "scenario_id")
+     DO UPDATE SET
+       protocol = EXCLUDED.protocol,
+       certification = EXCLUDED.certification,
+       completed_at = NOW()
+     RETURNING
+       id,
+       user_id as "userId",
+       scenario_id as "scenarioId",
+       protocol,
+       certification,
+       completed_at as "completedAt";`,
+    [id, userId, scenarioId, protocol, certification]
+  );
+
+  const row = res.rows[0];
+  return {
+    id: row.id,
+    userId: row.userId,
+    scenarioId: row.scenarioId,
+    protocol: row.protocol,
+    certification: row.certification,
+    completedAt: row.completedAt ? new Date(row.completedAt).toISOString() : new Date().toISOString(),
+  };
+}
+
+/**
+ * Lists all solved/completed simulation scenarios for a user.
+ */
+export async function listSimulationCompletions(userId: string): Promise<SimulationCompletionRecord[]> {
+  if (activeTestMockStore?.listSimulationCompletions) {
+    return activeTestMockStore.listSimulationCompletions(userId);
+  }
+
+  await ensureSimulationCompletionsTable();
+
+  const res = await query<any>(
+    `SELECT
+       id,
+       user_id as "userId",
+       scenario_id as "scenarioId",
+       protocol,
+       certification,
+       completed_at as "completedAt"
+     FROM simulation_completions
+     WHERE user_id = $1
+     ORDER BY completed_at DESC;`,
+    [userId]
+  );
+
+  return (res.rows || []).map((row) => ({
+    id: row.id,
+    userId: row.userId,
+    scenarioId: row.scenarioId,
+    protocol: row.protocol,
+    certification: row.certification,
+    completedAt: row.completedAt ? new Date(row.completedAt).toISOString() : new Date().toISOString(),
+  }));
 }
 
 

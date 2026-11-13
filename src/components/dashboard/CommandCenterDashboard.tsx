@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Badge } from '../ui';
 import { PROTOCOL_SIMULATION_CATALOG } from '../../data/simulations';
-import { fetchSavedSimulations } from '../../lib/api';
+import { fetchSavedSimulations, fetchCompletedSimulations } from '../../lib/api';
 
 import {
   Activity,
@@ -14,6 +14,7 @@ import {
   Terminal,
   Play,
   Sparkles,
+  CheckCircle2,
 } from 'lucide-react';
 
 export interface CommandCenterDashboardProps {
@@ -33,6 +34,7 @@ export const CommandCenterDashboard: React.FC<CommandCenterDashboardProps> = ({
   onNavigateToLibrary,
 }) => {
   const [savedLabsCount, setSavedLabsCount] = useState<number>(0);
+  const [completedLabIds, setCompletedLabIds] = useState<string[]>([]);
 
   useEffect(() => {
     let isMounted = true;
@@ -44,10 +46,24 @@ export const CommandCenterDashboard: React.FC<CommandCenterDashboardProps> = ({
       })
       .catch(() => {});
 
+    fetchCompletedSimulations()
+      .then((ids) => {
+        if (isMounted && Array.isArray(ids)) {
+          setCompletedLabIds(ids);
+        }
+      })
+      .catch(() => {});
+
     return () => {
       isMounted = false;
     };
   }, []);
+
+  const coreSolvedCount = PROTOCOL_SIMULATION_CATALOG.filter((s) =>
+    completedLabIds.includes(s.metadata.id)
+  ).length;
+  const coreTotalCount = PROTOCOL_SIMULATION_CATALOG.length;
+  const coreSolvedPercentage = Math.round((coreSolvedCount / coreTotalCount) * 100);
 
   // Protocol color mapping for badges
   const getProtocolBadgeVariant = (protocol: string): 'blue' | 'green' | 'amber' | 'purple' | 'slate' => {
@@ -79,10 +95,20 @@ export const CommandCenterDashboard: React.FC<CommandCenterDashboardProps> = ({
     {
       id: 'labs',
       title: 'Protocol Labs',
-      subtitle: savedLabsCount > 0 ? `5 Core + ${savedLabsCount} Custom Labs` : '5 Live Wire Simulators',
+      subtitle:
+        coreSolvedCount > 0
+          ? `${coreSolvedCount}/${coreTotalCount} Solved · ${savedLabsCount > 0 ? `+${savedLabsCount} Custom` : '5 Core'}`
+          : savedLabsCount > 0
+          ? `5 Core + ${savedLabsCount} Custom Labs`
+          : '5 Live Wire Simulators',
       icon: <Network className="w-4 h-4 sm:w-5 sm:h-5 text-accent" />,
-      badge: savedLabsCount > 0 ? `${5 + savedLabsCount} Sims` : '5 Sims',
-      badgeVariant: 'amber' as const,
+      badge:
+        coreSolvedCount > 0
+          ? `${coreSolvedCount}/${coreTotalCount} Solved`
+          : savedLabsCount > 0
+          ? `${5 + savedLabsCount} Sims`
+          : '5 Sims',
+      badgeVariant: coreSolvedCount > 0 ? ('green' as const) : ('amber' as const),
       onClick: () => onNavigateToLabs(),
     },
     {
@@ -200,15 +226,37 @@ export const CommandCenterDashboard: React.FC<CommandCenterDashboardProps> = ({
           </span>
         </div>
 
+        {/* Hands-On Lab Readiness Telemetry Bar */}
+        <div className="p-2.5 sm:p-3 rounded-xl bg-surface/90 border border-border-hairline space-y-1.5">
+          <div className="flex items-center justify-between text-xs font-mono">
+            <span className="flex items-center gap-1.5 text-slate-300 font-semibold">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              Hands-On Lab Readiness
+            </span>
+            <span className="text-emerald-400 font-bold">
+              {coreSolvedCount} / {coreTotalCount} Core Labs Solved ({coreSolvedPercentage}%)
+            </span>
+          </div>
+          <div className="h-1.5 w-full rounded-full bg-surface-elevated overflow-hidden border border-border-hairline/40">
+            <div
+              className="h-full rounded-full bg-emerald-500 transition-all duration-500"
+              style={{ width: `${coreSolvedPercentage}%` }}
+            />
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-3">
           {PROTOCOL_SIMULATION_CATALOG.map((scenario) => {
             const meta = scenario.metadata;
+            const isSolved = completedLabIds.includes(meta.id);
             return (
               <Card
                 key={meta.id}
                 variant="interactive"
                 onClick={() => onNavigateToLabs(meta.id)}
-                className="p-3 sm:p-3.5 flex flex-col justify-between space-y-2.5 hover:border-accent/40 transition-all border-border-hairline group touch-target-44"
+                className={`p-3 sm:p-3.5 flex flex-col justify-between space-y-2.5 transition-all border-border-hairline group touch-target-44 ${
+                  isSolved ? 'hover:border-emerald-500/50 bg-[#0d1512]/30' : 'hover:border-accent/40'
+                }`}
               >
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between gap-1.5">
@@ -219,6 +267,11 @@ export const CommandCenterDashboard: React.FC<CommandCenterDashboardProps> = ({
                       <Badge variant={meta.certification === 'CCNP' ? 'amber' : 'blue'} size="sm">
                         {meta.certification}
                       </Badge>
+                      {isSolved && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-600/70 font-bold shadow-[0_0_8px_rgba(16,185,129,0.2)]">
+                          ✓ SOLVED
+                        </span>
+                      )}
                     </div>
                     <span className="text-[9px] font-mono text-slate-500 uppercase">
                       {meta.difficulty}
@@ -235,10 +288,17 @@ export const CommandCenterDashboard: React.FC<CommandCenterDashboardProps> = ({
                 </div>
 
                 <div className="pt-2 border-t border-border-hairline/60 flex items-center justify-between text-xs font-medium text-slate-300 group-hover:text-white">
-                  <span className="flex items-center gap-1.5 text-accent font-mono text-[11px]">
-                    <Play className="w-3 h-3 fill-accent" />
-                    Launch Interactive Lab
-                  </span>
+                  {isSolved ? (
+                    <span className="flex items-center gap-1.5 text-emerald-400 font-mono text-[11px] font-semibold">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                      Review Solved Lab
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1.5 text-accent font-mono text-[11px]">
+                      <Play className="w-3 h-3 fill-accent" />
+                      Launch Interactive Lab
+                    </span>
+                  )}
                   <ArrowRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-accent group-hover:translate-x-0.5 transition-all" />
                 </div>
               </Card>

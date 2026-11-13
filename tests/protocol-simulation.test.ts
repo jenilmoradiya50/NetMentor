@@ -39,6 +39,8 @@ import {
   listSavedSimulations,
   getSavedSimulationById,
   deleteSavedSimulation,
+  markSimulationCompleted,
+  listSimulationCompletions,
   __setTestMockStore,
 } from '../api/_lib/db/client.js';
 import simulationsHandler from '../api/_routes/simulations.js';
@@ -46,6 +48,9 @@ import {
   simulationsApi,
   getLocalSavedSimulations,
   setLocalSavedSimulations,
+  getCompletedSimulationIds,
+  setCompletedSimulationIds,
+  addCompletedSimulationId,
 } from '../src/lib/api.ts';
 
 
@@ -1311,6 +1316,141 @@ async function runProtocolSimulationTests() {
   // Unknown command returns null
   assert(synthesizeLiveShowCommand('reload', mockRouterNode) === null, 'Unsupported action command returns null');
   assert(synthesizeLiveShowCommand('ping 8.8.8.8', mockRouterNode) === null, 'Ping returns null to allow fallback');
+
+  // =========================================================================
+  // SECTION 11: Phase L — Solved CLI Lab Persistence & Dashboard Telemetry
+  // =========================================================================
+  console.log('\n--- Section 11: Solved CLI Lab Persistence & Dashboard Telemetry ---');
+
+  // 11.1 Database Client & Mock Store for Lab Completions
+  console.log('   Testing Database Client & User Isolation:');
+  const mockCompletionsStore: any[] = [];
+  __setTestMockStore({
+    markSimulationCompleted: async (userId: string, scenarioId: string, protocol: string, certification: string) => {
+      const existingIdx = mockCompletionsStore.findIndex((c) => c.userId === userId && c.scenarioId === scenarioId);
+      const record = {
+        id: existingIdx >= 0 ? mockCompletionsStore[existingIdx].id : `compl-${mockCompletionsStore.length + 1}`,
+        userId,
+        scenarioId,
+        protocol,
+        certification,
+        completedAt: new Date().toISOString(),
+      };
+      if (existingIdx >= 0) {
+        mockCompletionsStore[existingIdx] = record;
+      } else {
+        mockCompletionsStore.push(record);
+      }
+      return record;
+    },
+    listSimulationCompletions: async (userId: string) => {
+      return mockCompletionsStore.filter((c) => c.userId === userId);
+    },
+  });
+
+  const compl1 = await markSimulationCompleted('user-sim-1', 'ospf-adjacency-mtu', 'OSPF', 'CCNA');
+  assert(compl1.userId === 'user-sim-1', 'Completion marked with correct userId');
+  assert(compl1.scenarioId === 'ospf-adjacency-mtu', 'Completion marked with correct scenarioId');
+  assert(compl1.protocol === 'OSPF', 'Completion preserved protocol');
+
+  const user1ComplList = await listSimulationCompletions('user-sim-1');
+  assert(user1ComplList.length === 1, 'listSimulationCompletions returns 1 record for user-sim-1');
+
+  // User isolation
+  const user2ComplList = await listSimulationCompletions('user-sim-2');
+  assert(user2ComplList.length === 0, 'User isolation verified: user-sim-2 has 0 completions');
+
+  // Idempotent re-marking
+  const compl1Re = await markSimulationCompleted('user-sim-1', 'ospf-adjacency-mtu', 'OSPF', 'CCNA');
+  assert(compl1Re.id === compl1.id, 'Re-marking completion is idempotent (same record ID)');
+  const user1ComplListAfter = await listSimulationCompletions('user-sim-1');
+  assert(user1ComplListAfter.length === 1, 'Idempotent re-marking does not create duplicate records');
+
+  __setTestMockStore(null);
+
+  // 11.2 API Route Handlers (/api/simulations resource=completions & action=complete)
+  console.log('   Testing API Route Handlers for Lab Completions:');
+  // Demo mode GET completions
+  const { req: demoGetComplReq, res: demoGetComplRes } = createMockReqRes({
+    method: 'GET',
+    url: '/api/simulations?resource=completions',
+    headers: { 'x-netmentor-demo': 'true' },
+    query: { resource: 'completions' },
+  });
+  await simulationsHandler(demoGetComplReq, demoGetComplRes);
+  assert(demoGetComplRes.getStatus() === 200, 'Demo GET /api/simulations?resource=completions returned HTTP 200');
+  assert(demoGetComplRes.getData()?.isDemoMode === true, 'Demo completions GET flags isDemoMode: true');
+  assert(Array.isArray(demoGetComplRes.getData()?.completions), 'Demo completions returns array');
+
+  // Demo mode POST complete
+  const { req: demoPostComplReq, res: demoPostComplRes } = createMockReqRes({
+    method: 'POST',
+    url: '/api/simulations',
+    headers: { 'x-netmentor-demo': 'true', 'x-netmentor-request': '1' },
+    body: {
+      action: 'complete',
+      scenarioId: 'tcp-handshake-teardown',
+      protocol: 'TCP',
+      certification: 'Network+',
+    },
+  });
+  await simulationsHandler(demoPostComplReq, demoPostComplRes);
+  assert(demoPostComplRes.getStatus() === 201, 'Demo POST action: complete returned HTTP 201 Created');
+  assert(demoPostComplRes.getData()?.completion?.scenarioId === 'tcp-handshake-teardown', 'Demo completion record returned');
+  assert(demoPostComplRes.getData()?.isDemoMode === true, 'Demo POST complete flags isDemoMode: true');
+
+  // POST complete without scenarioId returns 400
+  const { req: badPostComplReq, res: badPostComplRes } = createMockReqRes({
+    method: 'POST',
+    url: '/api/simulations',
+    headers: { 'x-netmentor-demo': 'true', 'x-netmentor-request': '1' },
+    body: {
+      action: 'complete',
+      // missing scenarioId
+    },
+  });
+  await simulationsHandler(badPostComplReq, badPostComplRes);
+  assert(badPostComplRes.getStatus() === 400, 'POST action: complete without scenarioId returns HTTP 400');
+
+  // POST complete without CSRF header returns 403
+  const { req: noCsrfComplReq, res: noCsrfComplRes } = createMockReqRes({
+    method: 'POST',
+    url: '/api/simulations',
+    headers: { 'x-netmentor-demo': 'true' },
+    body: {
+      action: 'complete',
+      scenarioId: 'tcp-handshake-teardown',
+    },
+  });
+  await simulationsHandler(noCsrfComplReq, noCsrfComplRes);
+  assert(noCsrfComplRes.getStatus() === 403, 'POST action: complete without CSRF returns HTTP 403');
+
+  // 11.3 Frontend Client & LocalStorage Fallback
+  console.log('   Testing Frontend Client & LocalStorage Persistence:');
+  setCompletedSimulationIds([]);
+  assert(getCompletedSimulationIds().length === 0, 'Completed simulation IDs initialized empty');
+
+  addCompletedSimulationId('vlan-trunking-roas');
+  assert(getCompletedSimulationIds().includes('vlan-trunking-roas'), 'addCompletedSimulationId records scenario');
+
+  // Duplicate add should be deduplicated
+  addCompletedSimulationId('vlan-trunking-roas');
+  assert(getCompletedSimulationIds().filter((id) => id === 'vlan-trunking-roas').length === 1, 'addCompletedSimulationId deduplicates IDs');
+
+  // Test simulationsApi.fetchCompletedSimulations in demo mode
+  const demoFetchRes = await simulationsApi.fetchCompletedSimulations({ isDemoMode: true });
+  assert(Array.isArray(demoFetchRes), 'fetchCompletedSimulations returns array of scenario IDs');
+  assert(demoFetchRes.includes('vlan-trunking-roas'), 'fetchCompletedSimulations includes saved local IDs');
+
+  // Test simulationsApi.markSimulationCompleted in demo mode
+  const markRes = await simulationsApi.markSimulationCompleted({
+    scenarioId: 'bgp-best-path-selection',
+    protocol: 'BGP',
+    certification: 'CCNP Enterprise',
+  }, { isDemoMode: true });
+  assert(markRes.success === true, 'markSimulationCompleted succeeded');
+  assert(markRes.scenarioId === 'bgp-best-path-selection', 'markSimulationCompleted returns scenarioId');
+  assert(getCompletedSimulationIds().includes('bgp-best-path-selection'), 'markSimulationCompleted synced ID to localStorage');
 
 
   console.log('\n=============================================================');

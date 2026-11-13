@@ -2,7 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { useProtocolSimulation } from '../../../hooks/useProtocolSimulation';
 import { PROTOCOL_SIMULATION_CATALOG, TCP_HANDSHAKE_SCENARIO } from '../../../data/simulations';
 import type { ProtocolSimulationScenario } from '../../../types/protocol-simulation';
-import { fetchSavedSimulations, saveCustomSimulation, deleteSavedSimulation } from '../../../lib/api';
+import {
+  fetchSavedSimulations,
+  saveCustomSimulation,
+  deleteSavedSimulation,
+  fetchCompletedSimulations,
+  markSimulationCompleted,
+  getCompletedSimulationIds,
+} from '../../../lib/api';
 import { TopologyVisualizer } from './TopologyVisualizer';
 import { SimulationPlaybackControls } from './SimulationPlaybackControls';
 import { PacketHeaderInspector } from './PacketHeaderInspector';
@@ -32,6 +39,9 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
     initialScenario.topology.nodes[0]?.id || 'host-client'
   );
   const [customScenarios, setCustomScenarios] = useState<ProtocolSimulationScenario[]>([]);
+  const [completedScenarioIds, setCompletedScenarioIds] = useState<string[]>(() =>
+    getCompletedSimulationIds()
+  );
   const [isGenModalOpen, setIsGenModalOpen] = useState<boolean>(false);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
@@ -75,9 +85,20 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
     setScenario,
   } = useProtocolSimulation(activeScenario);
 
-  // Load persisted custom simulations from API / LocalStorage on mount
+  // Load completed lab scenarios and saved custom simulations on mount
   useEffect(() => {
     let isMounted = true;
+
+    fetchCompletedSimulations()
+      .then((ids) => {
+        if (isMounted && Array.isArray(ids)) {
+          setCompletedScenarioIds(ids);
+        }
+      })
+      .catch((err) => {
+        console.warn('[Protocol Explorer] Could not load completed simulations:', err);
+      });
+
     fetchSavedSimulations()
       .then((records) => {
         if (!isMounted) return;
@@ -104,6 +125,23 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
       isMounted = false;
     };
   }, [initialScenarioId, setScenario]);
+
+  // Auto-record completion when CLI break-fix objective is verified
+  useEffect(() => {
+    if (isObjectiveSolved && scenario.metadata?.id) {
+      const scenarioId = scenario.metadata.id;
+      if (!completedScenarioIds.includes(scenarioId)) {
+        setCompletedScenarioIds((prev) => Array.from(new Set([...prev, scenarioId])));
+        markSimulationCompleted({
+          scenarioId,
+          protocol: scenario.metadata.protocol,
+          certification: scenario.metadata.certification,
+        }).catch((err) => {
+          console.warn('[Protocol Explorer] Failed to record scenario completion:', err);
+        });
+      }
+    }
+  }, [isObjectiveSolved, scenario.metadata, completedScenarioIds]);
 
 
   // Synchronize scenario state when initialScenarioId prop changes from parent navigation
@@ -188,6 +226,11 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
                 {isCustomScenario && (
                   <Badge variant="purple">Saved AI Lab</Badge>
                 )}
+                {completedScenarioIds.includes(scenario.metadata.id) && (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-mono px-2 py-0.5 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-600/70 font-bold shadow-[0_0_10px_rgba(16,185,129,0.25)]">
+                    ✓ SOLVED
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-400 mt-1 max-w-2xl leading-relaxed">
                 {scenario.metadata.description}
@@ -224,19 +267,25 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
                 className="px-3 py-2 rounded-xl bg-surface border border-border-hairline text-xs font-semibold text-white focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent min-h-[40px] max-w-[200px] sm:max-w-xs"
               >
                 <optgroup label="Core Curriculum Labs" className="bg-canvas text-slate-400 font-semibold">
-                  {PROTOCOL_SIMULATION_CATALOG.map((s) => (
-                    <option key={s.metadata.id} value={s.metadata.id} className="bg-canvas text-white">
-                      {s.metadata.title}
-                    </option>
-                  ))}
+                  {PROTOCOL_SIMULATION_CATALOG.map((s) => {
+                    const isSolved = completedScenarioIds.includes(s.metadata.id);
+                    return (
+                      <option key={s.metadata.id} value={s.metadata.id} className="bg-canvas text-white">
+                        {isSolved ? `✓ ${s.metadata.title}` : s.metadata.title}
+                      </option>
+                    );
+                  })}
                 </optgroup>
                 {customScenarios.length > 0 && (
                   <optgroup label="My Saved AI Labs" className="bg-canvas text-accent font-semibold">
-                    {customScenarios.map((s) => (
-                      <option key={s.metadata.id} value={s.metadata.id} className="bg-canvas text-white">
-                        ★ {s.metadata.title}
-                      </option>
-                    ))}
+                    {customScenarios.map((s) => {
+                      const isSolved = completedScenarioIds.includes(s.metadata.id);
+                      return (
+                        <option key={s.metadata.id} value={s.metadata.id} className="bg-canvas text-white">
+                          {isSolved ? `✓ ★ ${s.metadata.title}` : `★ ${s.metadata.title}`}
+                        </option>
+                      );
+                    })}
                   </optgroup>
                 )}
               </select>

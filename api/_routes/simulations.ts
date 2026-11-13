@@ -14,6 +14,8 @@ import {
   listSavedSimulations,
   getSavedSimulationById,
   deleteSavedSimulation,
+  markSimulationCompleted,
+  listSimulationCompletions,
 } from '../_lib/db/client.js';
 import { validateSimulationScenario } from '../_lib/ai/simulation-validator.js';
 
@@ -57,7 +59,18 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
  * Demo mode fallback handler for unauthenticated users exploring in demo mode
  */
 function handleDemoMode(req: ApiRequest, res: ApiResponse, method?: string) {
+  const resource = typeof req.query?.resource === 'string' ? req.query.resource.trim() : undefined;
+
   if (method === 'GET') {
+    if (resource === 'completions') {
+      return res.status(200).json({
+        success: true,
+        completions: [],
+        count: 0,
+        isDemoMode: true,
+      });
+    }
+
     return res.status(200).json({
       success: true,
       simulations: [],
@@ -71,6 +84,29 @@ function handleDemoMode(req: ApiRequest, res: ApiResponse, method?: string) {
       return res.status(403).json({
         error: 'Forbidden',
         message: 'CSRF validation failed.',
+      });
+    }
+
+    if (req.body?.action === 'complete') {
+      const scenarioId = typeof req.body?.scenarioId === 'string' ? req.body.scenarioId.trim() : '';
+      if (!scenarioId) {
+        return res.status(400).json({
+          error: 'Bad Request',
+          message: 'Missing scenarioId for completion record.',
+        });
+      }
+
+      return res.status(201).json({
+        success: true,
+        completion: {
+          id: `demo-comp-${Date.now()}`,
+          userId: 'demo-user',
+          scenarioId,
+          protocol: req.body?.protocol || 'OSPF',
+          certification: req.body?.certification || 'CCNA',
+          completedAt: new Date().toISOString(),
+        },
+        isDemoMode: true,
       });
     }
 
@@ -129,14 +165,25 @@ function handleDemoMode(req: ApiRequest, res: ApiResponse, method?: string) {
  */
 async function handleGet(req: ApiRequest, res: ApiResponse, userId: string) {
   let simId = typeof req.query?.id === 'string' ? req.query.id.trim() : undefined;
-  if (!simId && req.url && req.url.includes('?')) {
+  let resource = typeof req.query?.resource === 'string' ? req.query.resource.trim() : undefined;
+  if (req.url && req.url.includes('?')) {
     try {
       const searchParams = new URL(req.url, 'http://localhost').searchParams;
       if (!simId) simId = searchParams.get('id')?.trim() || undefined;
+      if (!resource) resource = searchParams.get('resource')?.trim() || undefined;
     } catch {}
   }
 
   try {
+    if (resource === 'completions') {
+      const completions = await listSimulationCompletions(userId);
+      return res.status(200).json({
+        success: true,
+        completions,
+        count: completions.length,
+      });
+    }
+
     if (simId) {
       const simulation = await getSavedSimulationById(userId, simId);
       if (!simulation) {
@@ -167,7 +214,7 @@ async function handleGet(req: ApiRequest, res: ApiResponse, userId: string) {
 }
 
 /**
- * POST: Validate and persist a simulation scenario
+ * POST: Validate and persist a simulation scenario or lab completion
  */
 async function handlePost(req: ApiRequest, res: ApiResponse, userId: string) {
   if (!req.body || typeof req.body !== 'object') {
@@ -175,6 +222,41 @@ async function handlePost(req: ApiRequest, res: ApiResponse, userId: string) {
       error: 'Bad Request',
       message: 'Request body must be a valid JSON object.',
     });
+  }
+
+  // 1. Handle lab completion tracking
+  if ((req.body as any).action === 'complete') {
+    if (!validateCsrf(req)) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'CSRF validation failed.',
+      });
+    }
+
+    const scenarioId = typeof (req.body as any).scenarioId === 'string' ? (req.body as any).scenarioId.trim() : '';
+    if (!scenarioId) {
+      return res.status(400).json({
+        error: 'Bad Request',
+        message: 'Missing scenarioId in request body.',
+      });
+    }
+
+    const protocol = typeof (req.body as any).protocol === 'string' ? (req.body as any).protocol.trim() : 'OSPF';
+    const certification = typeof (req.body as any).certification === 'string' ? (req.body as any).certification.trim() : 'CCNA';
+
+    try {
+      const completion = await markSimulationCompleted(userId, scenarioId, protocol, certification);
+      return res.status(201).json({
+        success: true,
+        completion,
+      });
+    } catch (err: any) {
+      console.error('[Mark Simulation Completed Error]:', err?.message);
+      return res.status(500).json({
+        error: 'Internal Server Error',
+        message: 'Failed to record simulation completion in database.',
+      });
+    }
   }
 
   const rawScenario = (req.body as any).scenario || req.body;
