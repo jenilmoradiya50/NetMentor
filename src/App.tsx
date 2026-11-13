@@ -579,37 +579,11 @@ function Dashboard() {
                   </p>
                 </div>
               </button>
-
-              {mainTab !== 'dashboard' && (
-                <button
-                  type="button"
-                  onClick={() => handleTabChange('dashboard')}
-                  className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-300 hover:text-white bg-surface-elevated/90 hover:bg-surface-elevated border border-border-hairline hover:border-accent/40 rounded-lg transition-colors press-scale touch-target-44 min-h-[36px]"
-                  title="Return to Command Center Dashboard"
-                  aria-label="Return to Command Center Dashboard"
-                >
-                  <ArrowLeft className="w-3.5 h-3.5 text-accent" />
-                  <span className="font-semibold text-[11px] font-mono">Dashboard</span>
-                </button>
-              )}
             </div>
           )}
 
-          {/* Desktop Right Controls (AI Tutor, Database status, Session info & Logout) */}
-          <div className="hidden md:flex items-center gap-2.5">
-            <button
-              type="button"
-              onClick={() => openTutor()}
-              className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl bg-surface-elevated/70 hover:bg-surface-elevated text-slate-200 hover:text-white border border-slate-700/60 hover:border-accent/40 shadow-inner-light transition-all press-scale min-h-[36px]"
-              aria-label="Open NetMentor AI Tutor"
-            >
-              <Bot className="w-3.5 h-3.5 text-accent" />
-              <span className="font-medium">Ask AI Tutor</span>
-              <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-accent/20 text-accent border border-accent/30">
-                AI Assistant
-              </span>
-            </button>
-
+          {/* Desktop Right Controls (Database status, Session info & Logout) */}
+          <div className="hidden md:flex items-center gap-3">
             <DatabaseStatusBadge showLatency={true} />
 
             <div className="flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-xl bg-surface-elevated/70 text-emerald-400 border border-slate-700/60 shadow-inner-light">
@@ -636,18 +610,8 @@ function Dashboard() {
             </Button>
           </div>
 
-          {/* Mobile Right Controls: AI Tutor & Compact Account Button */}
-          <div className="flex items-center gap-1.5 md:hidden flex-shrink-0">
-            <button
-              type="button"
-              onClick={() => openTutor()}
-              className="p-2 rounded-xl bg-surface-elevated text-accent border border-border-hairline press-scale min-h-[44px] min-w-[44px] flex items-center justify-center relative touch-target-44"
-              aria-label="Open NetMentor AI Tutor"
-              title="Ask AI Tutor"
-            >
-              <Bot className="w-4 h-4 text-accent" />
-              <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-accent animate-pulse" />
-            </button>
+          {/* Mobile Right Controls: Database status badge/refresh & Compact Account Details */}
+          <div className="flex items-center gap-2 md:hidden flex-shrink-0">
             <DatabaseStatusBadge showLatency={false} />
             <button
               type="button"
@@ -697,7 +661,7 @@ function Dashboard() {
       </nav>
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-6xl w-full mx-auto px-4 py-5 sm:py-7 pb-8 md:pb-12">
+      <main className="flex-1 max-w-6xl w-full mx-auto px-4 py-5 sm:py-7 pb-20">
         <Suspense fallback={<ViewLoadingFallback />}>
           {mainTab === 'dashboard' ? (
             <CommandCenterDashboard
@@ -790,6 +754,34 @@ function Dashboard() {
           )}
         </Suspense>
       </main>
+
+      {/* Opposing Bottom-Corner Floating Action Buttons */}
+      {/* Floating Dashboard Button (Bottom-Left — visible only when mainTab !== 'dashboard') */}
+      {mainTab !== 'dashboard' && (
+        <button
+          type="button"
+          onClick={() => handleTabChange('dashboard')}
+          className="fixed bottom-5 left-4 z-40 pb-[env(safe-area-inset-bottom)] inline-flex items-center gap-2 px-3.5 h-11 rounded-full bg-[#111317]/95 backdrop-blur-md border border-[#232730] hover:border-amber-500/50 text-slate-100 text-xs font-medium shadow-lg shadow-black/60 touch-target-44 transition-all press-scale"
+          aria-label="Return to Command Center Dashboard"
+          title="Return to Command Center Dashboard"
+        >
+          <ArrowLeft className="w-4 h-4 text-amber-400" />
+          <span>Dashboard</span>
+        </button>
+      )}
+
+      {/* Floating AI Tutor Button (Bottom-Right — always accessible) */}
+      <button
+        type="button"
+        onClick={() => openTutor()}
+        className="fixed bottom-5 right-4 z-40 pb-[env(safe-area-inset-bottom)] inline-flex items-center gap-2 px-3.5 h-11 rounded-full bg-[#111317]/95 backdrop-blur-md border border-amber-500/40 hover:border-amber-400 text-amber-400 text-xs font-semibold shadow-lg shadow-black/60 touch-target-44 transition-all press-scale"
+        aria-label="Open NetMentor AI Tutor"
+        title="Ask NetMentor AI Tutor"
+      >
+        <Bot className="w-4 h-4" />
+        <span className="hidden xs:inline">Ask AI</span>
+        <span className="w-2 h-2 rounded-full bg-[#F59E0B] animate-pulse" />
+      </button>
 
 
 
