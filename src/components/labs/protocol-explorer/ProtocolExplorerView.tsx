@@ -22,7 +22,8 @@ import { NodeTableInspector } from './NodeTableInspector';
 import { ProtocolCliConsole } from './ProtocolCliConsole';
 import { AiScenarioGeneratorModal } from './AiScenarioGeneratorModal';
 import { Card, Badge, Button } from '../../ui';
-import { Network, Info, Sparkles, Trash2 } from 'lucide-react';
+import { Network, Info, Sparkles, Trash2, Download } from 'lucide-react';
+import { buildScenarioTraceJson } from '../../../utils/packetHexEncoder';
 
 
 export interface ProtocolExplorerViewProps {
@@ -312,6 +313,23 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
     }
   };
 
+  const handleExportTrace = () => {
+    try {
+      const traceData = buildScenarioTraceJson(activeScenario, computedTopology);
+      const jsonStr = JSON.stringify(traceData, null, 2);
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${activeScenario.metadata.id}-wire-trace.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('[Protocol Explorer] Failed to export trace JSON:', err);
+    }
+  };
 
   if (!currentStep) return null;
 
@@ -425,6 +443,18 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
             >
               <span className="hidden sm:inline">AI Generate Lab</span>
               <span className="sm:hidden">AI Lab</span>
+            </Button>
+
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleExportTrace}
+              icon={<Download className="w-3.5 h-3.5 text-accent" />}
+              className="touch-target-44 min-h-[40px]"
+              title="Download wire-level JSON packet trace"
+            >
+              <span className="hidden sm:inline">Export Trace</span>
+              <span className="sm:hidden">Trace</span>
             </Button>
           </div>
         </div>

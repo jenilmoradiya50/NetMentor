@@ -7,6 +7,15 @@ import {
   BGP_BEST_PATH_SCENARIO,
 } from '../src/data/simulations/index.ts';
 import {
+  encodePacketToHexDump,
+  buildScenarioTraceJson,
+  formatWiresharkHexDump,
+  parseMac,
+  parseIpv4,
+  computeIpv4Checksum,
+  formatHexRange,
+} from '../src/utils/packetHexEncoder.ts';
+import {
   computeAccumulatedTopology,
   applySingleMutation,
   extractBaseHostname,
@@ -1649,6 +1658,178 @@ async function runProtocolSimulationTests() {
   assert(badLabRes.getStatus() === 400, 'POST /api/ai/tutor with malformed labContext returns HTTP 400');
 
   __setTestMockStore(null);
+
+  // =========================================================================
+  // 13. Wire-Level Hex Frame Inspector & Packet Trace Export
+  // =========================================================================
+  console.log('\n--- Section 13: Wire-Level Hex Frame Inspector & Packet Trace Export ---');
+  console.log('   Testing MAC, IPv4, Checksum, and Range Helpers:');
+
+  const parsedStandardMac = parseMac('00:1A:2B:3C:4D:01');
+  assert(parsedStandardMac.length === 6, 'parseMac returns 6 octets');
+  assert(parsedStandardMac[0] === 0x00 && parsedStandardMac[1] === 0x1a && parsedStandardMac[5] === 0x01, 'parseMac correctly decodes standard colon MAC');
+
+  const parsedBroadcastMac = parseMac('FF:FF:FF:FF:FF:FF');
+  assert(parsedBroadcastMac.every((b) => b === 0xff), 'parseMac decodes broadcast FF:FF:FF:FF:FF:FF');
+
+  const parsedNonHexMac = parseMac('00:1A:2B:3C:4D:R1');
+  assert(parsedNonHexMac.length === 6 && parsedNonHexMac.every((b) => !isNaN(b)), 'parseMac gracefully sanitizes non-hex device label MACs without NaN');
+
+  const parsedStandardIp = parseIpv4('192.168.1.10');
+  assert(parsedStandardIp[0] === 192 && parsedStandardIp[1] === 168 && parsedStandardIp[2] === 1 && parsedStandardIp[3] === 10, 'parseIpv4 decodes standard dotted quad IP');
+
+  const parsedMulticastIp = parseIpv4('224.0.0.5');
+  assert(parsedMulticastIp[0] === 224 && parsedMulticastIp[3] === 5, 'parseIpv4 decodes OSPF multicast 224.0.0.5');
+
+  assert(formatHexRange(0, 13) === '0x00–0x0D', 'formatHexRange formats 0..13 as 0x00–0x0D');
+  assert(formatHexRange(14, 33) === '0x0E–0x21', 'formatHexRange formats 14..33 as 0x0E–0x21');
+
+  // Test RFC 1071 Header Checksum
+  const sampleIpv4Header = [
+    0x45, 0x00, 0x00, 0x3c, 0x1c, 0x46, 0x40, 0x00, 0x40, 0x06, 0x00, 0x00,
+    192, 168, 1, 10, 192, 168, 1, 100,
+  ];
+  const computedCksum = computeIpv4Checksum(sampleIpv4Header);
+  assert(typeof computedCksum === 'number' && computedCksum > 0 && computedCksum <= 0xffff, 'computeIpv4Checksum calculates valid 16-bit one\'s complement sum');
+
+  console.log('   Testing TCP Handshake Wire-Level Encapsulation & Flags:');
+  const tcpSynStep = TCP_HANDSHAKE_SCENARIO.steps[0];
+  const tcpSynDump = encodePacketToHexDump(tcpSynStep.transmission.packet);
+
+  assert(tcpSynDump.byteCount >= 54, 'TCP SYN frame has at least 54 bytes (14 L2 + 20 L3 + 20 L4)');
+  assert(tcpSynDump.layerRanges.l2.start === 0 && tcpSynDump.layerRanges.l2.end === 13, 'L2 layer range is 0x00–0x0D (14 bytes)');
+  assert(tcpSynDump.layerRanges.l2.hexBadge === 'L2: 0x00–0x0D', 'L2 badge matches L2: 0x00–0x0D');
+
+  // EtherType IPv4 check
+  assert(tcpSynDump.bytes[12] === 0x08 && tcpSynDump.bytes[13] === 0x00, 'EtherType at bytes 12-13 is 0x0800 (IPv4)');
+
+  // IPv4 Header checks
+  assert(tcpSynDump.layerRanges.l3.start === 14 && tcpSynDump.layerRanges.l3.end === 33, 'L3 layer range is 0x0E–0x21 (20 bytes)');
+  assert(tcpSynDump.bytes[14] === 0x45, 'IPv4 Version/IHL byte is 0x45');
+  assert(tcpSynDump.bytes[23] === 6, 'IPv4 Protocol byte is 6 (TCP)');
+  assert(tcpSynDump.bytes[26] === 192 && tcpSynDump.bytes[29] === 10, 'IPv4 Source IP matches 192.168.1.10');
+  assert(tcpSynDump.bytes[30] === 192 && tcpSynDump.bytes[33] === 100, 'IPv4 Destination IP matches 192.168.1.100');
+
+  // TCP Header & Flags checks
+  assert(tcpSynDump.layerRanges.l4.start === 34 && tcpSynDump.layerRanges.l4.end === 53, 'L4 TCP header range starts at byte 34 (0x22)');
+  const tcpSrcPort = (tcpSynDump.bytes[34] << 8) | tcpSynDump.bytes[35];
+  const tcpDstPort = (tcpSynDump.bytes[36] << 8) | tcpSynDump.bytes[37];
+  assert(tcpSrcPort === 49152, 'TCP Source Port is 49152');
+  assert(tcpDstPort === 80, 'TCP Destination Port is 80');
+
+  const tcpSeqNum =
+    ((tcpSynDump.bytes[38] << 24) >>> 0) |
+    (tcpSynDump.bytes[39] << 16) |
+    (tcpSynDump.bytes[40] << 8) |
+    tcpSynDump.bytes[41];
+  assert(tcpSeqNum === 1000, 'TCP Sequence Number encodes 1000');
+  assert(tcpSynDump.bytes[46] === 0x50, 'TCP Data Offset byte is 0x50 (5 32-bit words)');
+  assert(tcpSynDump.bytes[47] === 0x02, 'TCP Control Flag byte is 0x02 (SYN flag set)');
+
+  // Step 1: SYN-ACK checks
+  const tcpSynAckStep = TCP_HANDSHAKE_SCENARIO.steps[1];
+  const tcpSynAckDump = encodePacketToHexDump(tcpSynAckStep.transmission.packet);
+  assert(tcpSynAckDump.bytes[47] === 0x12, 'TCP Control Flag byte is 0x12 (SYN | ACK bits set)');
+  const tcpSynAckSeq =
+    ((tcpSynAckDump.bytes[38] << 24) >>> 0) |
+    (tcpSynAckDump.bytes[39] << 16) |
+    (tcpSynAckDump.bytes[40] << 8) |
+    tcpSynAckDump.bytes[41];
+  assert(tcpSynAckSeq === 5000, 'TCP SYN-ACK Sequence Number encodes 5000');
+  const tcpSynAckAck =
+    ((tcpSynAckDump.bytes[42] << 24) >>> 0) |
+    (tcpSynAckDump.bytes[43] << 16) |
+    (tcpSynAckDump.bytes[44] << 8) |
+    tcpSynAckDump.bytes[45];
+  assert(tcpSynAckAck === 1001, 'TCP SYN-ACK Acknowledgment Number encodes 1001 (ISN + 1)');
+
+  // Step 2: ACK checks
+  const tcpAckStep = TCP_HANDSHAKE_SCENARIO.steps[2];
+  const tcpAckDump = encodePacketToHexDump(tcpAckStep.transmission.packet);
+  assert(tcpAckDump.bytes[47] === 0x10, 'TCP Control Flag byte is 0x10 (ACK bit only)');
+
+  console.log('   Testing IEEE 802.1Q VLAN Tag Encapsulation:');
+  const vlanUntaggedStep = VLAN_TRUNKING_ROAS_SCENARIO.steps[0];
+  const vlanUntaggedDump = encodePacketToHexDump(vlanUntaggedStep.transmission.packet);
+  assert(vlanUntaggedDump.layerRanges.l2.length === 14, 'Untagged access frame has 14-byte L2 header');
+  assert(!vlanUntaggedDump.layerRanges.l2.hexBadge.includes('802.1Q'), 'Untagged frame badge does not contain 802.1Q');
+
+  const vlanTaggedStep = VLAN_TRUNKING_ROAS_SCENARIO.steps[1];
+  const vlanTaggedDump = encodePacketToHexDump(vlanTaggedStep.transmission.packet);
+  assert(vlanTaggedDump.layerRanges.l2.length === 18, '802.1Q tagged frame has 18-byte L2 header (14 + 4 VLAN tag)');
+  assert(vlanTaggedDump.layerRanges.l2.hexBadge.includes('802.1Q'), 'Tagged frame badge indicates 802.1Q');
+  assert(vlanTaggedDump.bytes[12] === 0x81 && vlanTaggedDump.bytes[13] === 0x00, '802.1Q TPID at bytes 12-13 is 0x8100');
+  const vlanTci = (vlanTaggedDump.bytes[14] << 8) | vlanTaggedDump.bytes[15];
+  const vid = vlanTci & 0x0fff;
+  assert(vid === 10, '802.1Q TCI encodes VLAN ID 10');
+  assert(vlanTaggedDump.bytes[16] === 0x08 && vlanTaggedDump.bytes[17] === 0x00, 'Encapsulated EtherType after 802.1Q tag is 0x0800');
+  assert(vlanTaggedDump.layerRanges.l3.start === 18, 'L3 datagram shifts to start at byte index 18');
+
+  console.log('   Testing ARP Frame Encapsulation:');
+  const arpReqStep = ARP_MAC_LEARNING_SCENARIO.steps[0];
+  const arpReqDump = encodePacketToHexDump(arpReqStep.transmission.packet);
+  assert(arpReqDump.bytes[12] === 0x08 && arpReqDump.bytes[13] === 0x06, 'EtherType at bytes 12-13 is 0x0806 (ARP)');
+  assert(arpReqDump.layerRanges.l3.length === 28, 'ARP payload is 28 bytes');
+  assert(arpReqDump.layerRanges.l3.hexBadge.includes('ARP'), 'L3 badge indicates ARP');
+  const arpOpcode = (arpReqDump.bytes[20] << 8) | arpReqDump.bytes[21];
+  assert(arpOpcode === 1, 'ARP Opcode is 1 (ARP Request)');
+  // Target MAC in broadcast ARP request is 00:00:00:00:00:00
+  const arpTargetMac = arpReqDump.bytes.slice(32, 38);
+  assert(arpTargetMac.every((b) => b === 0), 'ARP Request targets unknown MAC 00:00:00:00:00:00');
+  assert(arpReqDump.bytes[38] === 192 && arpReqDump.bytes[41] === 20, 'ARP Request targets IP 192.168.1.20');
+
+  // ARP Reply check (Step 4 in ARP scenario)
+  const arpReplyStep = ARP_MAC_LEARNING_SCENARIO.steps[4];
+  const arpReplyDump = encodePacketToHexDump(arpReplyStep.transmission.packet);
+  const arpReplyOpcode = (arpReplyDump.bytes[20] << 8) | arpReplyDump.bytes[21];
+  assert(arpReplyOpcode === 2, 'ARP Reply Opcode is 2 (ARP Reply)');
+
+  console.log('   Testing OSPF and BGP Wire Frames:');
+  const ospfStep = OSPF_ADJACENCY_SCENARIO.steps[0];
+  const ospfDump = encodePacketToHexDump(ospfStep.transmission.packet);
+  assert(ospfDump.bytes[23] === 89, 'IPv4 protocol number is 89 (OSPF)');
+  assert(ospfDump.bytes[30] === 224 && ospfDump.bytes[33] === 5, 'IPv4 destination is 224.0.0.5 (All OSPF Routers multicast)');
+  assert(ospfDump.layerRanges.l4.length === 24, 'OSPFv2 header length is 24 bytes');
+  assert(ospfDump.bytes[34] === 0x02, 'OSPF Version is 2');
+  assert(ospfDump.bytes[35] === 0x01, 'OSPF Type is 1 (Hello)');
+
+  const bgpStep = BGP_BEST_PATH_SCENARIO.steps[0];
+  const bgpDump = encodePacketToHexDump(bgpStep.transmission.packet);
+  assert(bgpDump.bytes[23] === 6, 'BGP transport is TCP (protocol 6)');
+  const bgpDstPort = (bgpDump.bytes[36] << 8) | bgpDump.bytes[37];
+  assert(bgpDstPort === 179, 'BGP destination port is 179');
+
+  console.log('   Testing Wireshark Hex Dump Formatting:');
+  const lines = tcpSynDump.hexDump.split('\n');
+  assert(lines.length >= 4, 'Hex dump has at least 4 16-byte rows');
+  assert(lines[0].startsWith('0000  '), 'First line starts with offset 0000  ');
+  assert(lines[1].startsWith('0010  '), 'Second line starts with offset 0010  ');
+  assert(lines[2].startsWith('0020  '), 'Third line starts with offset 0020  ');
+  assert(lines[0].includes('|'), 'Hex dump lines include ASCII boundary pipes |...|');
+  assert(tcpSynDump.rawHex.split(' ').length === tcpSynDump.byteCount, 'rawHex contains space-separated hex bytes matching byteCount');
+  assert(String(tcpSynDump) === tcpSynDump.hexDump, 'encodePacketToHexDump toString coerces to hexDump');
+
+  console.log('   Testing Packet Trace JSON Export across all 5 Catalog Scenarios:');
+  for (const scenario of PROTOCOL_SIMULATION_CATALOG) {
+    const traceJson = buildScenarioTraceJson(scenario);
+    assert(traceJson.captureInfo.scenarioId === scenario.metadata.id, `Export captures scenario ID ${scenario.metadata.id}`);
+    assert(traceJson.captureInfo.totalSteps === scenario.steps.length, `Export records step count ${scenario.steps.length}`);
+    assert(traceJson.captureInfo.engine.includes('NetMentor'), 'Export contains NetMentor engine watermark');
+    assert(traceJson.trace.length === scenario.steps.length, `Export trace contains all ${scenario.steps.length} steps`);
+    assert(traceJson.topologySummary.nodeCount === scenario.topology.nodes.length, `Topology summary includes all nodes`);
+
+    // Verify first step in trace
+    const firstStep = traceJson.trace[0];
+    assert(Boolean(firstStep.hexDump && firstStep.rawHex), 'Trace step includes hex dump and raw hex');
+    assert(firstStep.byteCount > 0, 'Trace step records positive byte count');
+    assert(Boolean(firstStep.layerRanges.l2 && firstStep.layerRanges.l3), 'Trace step records L2 and L3 layer ranges');
+
+    // Verify clean JSON serialization
+    const serialized = JSON.stringify(traceJson);
+    assert(serialized.length > 500, 'Trace JSON serializes to clean string');
+    const deserialized = JSON.parse(serialized);
+    assert(deserialized.captureInfo.scenarioId === scenario.metadata.id, 'Trace JSON round-trip parses identically');
+  }
 
 
   console.log('\n=============================================================');
