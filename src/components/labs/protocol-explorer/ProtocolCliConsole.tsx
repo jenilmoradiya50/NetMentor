@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Card, Badge, Button } from '../../ui';
-import type { CliLogEntry } from '../../../hooks/useProtocolSimulation';
+import type { CliLogEntry, CliMode } from '../../../hooks/useProtocolSimulation';
 import type { ScenarioCliConfig } from '../../../types/protocol-simulation';
 import {
   Terminal,
@@ -17,6 +17,9 @@ export interface ProtocolCliConsoleProps {
   cliConfig?: ScenarioCliConfig;
   cliHistory: CliLogEntry[];
   promptHostname: string;
+  activePrompt?: string;
+  cliMode?: CliMode;
+  cliSubModeLabel?: string;
   isObjectiveSolved: boolean;
   onExecuteCommand: (command: string) => { success: boolean; output: string; goalAchieved?: boolean };
   onResetCli: () => void;
@@ -27,6 +30,9 @@ export const ProtocolCliConsole: React.FC<ProtocolCliConsoleProps> = ({
   cliConfig,
   cliHistory,
   promptHostname,
+  activePrompt,
+  cliMode = 'privileged',
+  cliSubModeLabel = 'config-if',
   isObjectiveSolved,
   onExecuteCommand,
   onResetCli,
@@ -37,6 +43,9 @@ export const ProtocolCliConsole: React.FC<ProtocolCliConsoleProps> = ({
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
   const logContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const displayPrompt = activePrompt || promptHostname;
+
 
   // Auto-scroll terminal log to bottom on new entries
   useEffect(() => {
@@ -83,12 +92,22 @@ export const ProtocolCliConsole: React.FC<ProtocolCliConsoleProps> = ({
     setHistoryIndex(-1);
   };
 
-  // Quick chips: available commands or common abbreviations
-  const quickCommands = cliConfig?.allowedCommands?.map((c) => c.command) || [
+  // Quick chips: available commands or common abbreviations + authentic mode transitions
+  const scenarioCommands = cliConfig?.allowedCommands?.map((c) => c.command) || [
     'show running-config',
     'show ip route',
-    'help',
   ];
+
+  let modeNavCommands: string[] = [];
+  if (cliMode === 'privileged') {
+    modeNavCommands = ['configure terminal'];
+  } else if (cliMode === 'config') {
+    modeNavCommands = ['interface Gi0/0', 'exit', 'end'];
+  } else {
+    modeNavCommands = ['exit', 'end'];
+  }
+
+  const quickCommands = Array.from(new Set([...modeNavCommands, ...scenarioCommands, 'help']));
 
   return (
     <Card
@@ -104,10 +123,23 @@ export const ProtocolCliConsole: React.FC<ProtocolCliConsoleProps> = ({
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs sm:text-sm font-bold text-white font-mono tracking-tight">
-                {cliConfig?.promptHostname || 'Router#'} In-App IOS Console
+                {displayPrompt} In-App IOS Console
               </span>
-              {cliConfig?.protocolScope && (
+              {cliMode === 'config' ? (
                 <Badge variant="blue" size="sm">
+                  CONFIG
+                </Badge>
+              ) : cliMode === 'config-sub' ? (
+                <Badge variant="purple" size="sm">
+                  {(cliSubModeLabel || 'CONFIG-IF').toUpperCase()}
+                </Badge>
+              ) : (
+                <Badge variant="amber" size="sm">
+                  EXEC
+                </Badge>
+              )}
+              {cliConfig?.protocolScope && (
+                <Badge variant="slate" size="sm">
                   {cliConfig.protocolScope}
                 </Badge>
               )}
@@ -248,7 +280,7 @@ export const ProtocolCliConsole: React.FC<ProtocolCliConsoleProps> = ({
       <form onSubmit={handleSubmit} className="flex items-center gap-2">
         <div className="flex-1 flex items-center gap-2 px-3 py-2 rounded-xl bg-surface border border-border-hairline focus-within:border-accent focus-within:ring-1 focus-within:ring-accent min-h-[44px]">
           <span className="text-xs font-mono font-bold text-accent select-none whitespace-nowrap">
-            {promptHostname}
+            {displayPrompt}
           </span>
           <input
             ref={inputRef}

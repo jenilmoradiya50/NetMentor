@@ -16,7 +16,7 @@
       "destination": "/api/[...route]?__route=/api/$1"
     },
     {
-      "source": "/(.*)",
+      "source": "/((?!api/|assets/).*)",
       "destination": "/index.html"
     }
   ]

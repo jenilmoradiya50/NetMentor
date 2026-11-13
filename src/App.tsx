@@ -82,7 +82,101 @@ function ViewLoadingFallback({ message = 'Loading module...' }: { message?: stri
   );
 }
 
-type TabId = 'dashboard' | 'curriculum' | 'flashcards' | 'quizzes' | 'labs' | 'library';
+export type TabId = 'dashboard' | 'curriculum' | 'flashcards' | 'quizzes' | 'labs' | 'library';
+
+export interface AppRouteState {
+  tab: TabId;
+  scenarioId: string | null;
+  lessonId: string | null;
+  genLessonId: string | null;
+  deckId: string | null;
+  quizId: string | null;
+  attemptId: string | null;
+  isLegacyRedirect?: boolean;
+}
+
+export function parseAppRoute(pathname: string, search: string): AppRouteState {
+  const searchParams = new URLSearchParams(search);
+  const legacyTab = searchParams.get('tab');
+  const legacyScenario = searchParams.get('scenario');
+  const lessonId = searchParams.get('lesson');
+  const genLessonId = searchParams.get('genLesson');
+  const deckId = searchParams.get('deckId');
+  const quizId = searchParams.get('quizId');
+  const attemptId = searchParams.get('attemptId');
+
+  let tab: TabId = 'dashboard';
+  let scenarioId: string | null = legacyScenario || null;
+  let isLegacyRedirect = false;
+
+  // 1. Check legacy query string (?tab=...)
+  if (legacyTab && ['dashboard', 'curriculum', 'flashcards', 'quizzes', 'labs', 'library'].includes(legacyTab)) {
+    tab = legacyTab as TabId;
+    isLegacyRedirect = true;
+  } else {
+    // 2. Parse clean path
+    const trimmedPath = pathname.replace(/\/+$/, '') || '/';
+    if (trimmedPath === '/' || trimmedPath === '/dashboard') {
+      tab = 'dashboard';
+    } else if (trimmedPath === '/curriculum') {
+      tab = 'curriculum';
+    } else if (trimmedPath === '/flashcards') {
+      tab = 'flashcards';
+    } else if (trimmedPath === '/quizzes') {
+      tab = 'quizzes';
+    } else if (trimmedPath === '/library') {
+      tab = 'library';
+    } else if (trimmedPath === '/labs') {
+      tab = 'labs';
+    } else if (trimmedPath.startsWith('/labs/')) {
+      tab = 'labs';
+      const segment = trimmedPath.slice('/labs/'.length).trim();
+      if (segment) {
+        scenarioId = decodeURIComponent(segment);
+      }
+    }
+  }
+
+  return {
+    tab,
+    scenarioId,
+    lessonId,
+    genLessonId,
+    deckId,
+    quizId,
+    attemptId,
+    isLegacyRedirect,
+  };
+}
+
+export function buildAppUrl(state: {
+  tab: TabId;
+  scenarioId?: string | null;
+  lessonId?: string | null;
+  genLessonId?: string | null;
+  deckId?: string | null;
+  quizId?: string | null;
+  attemptId?: string | null;
+}): string {
+  let path = '/';
+  if (state.tab === 'curriculum') path = '/curriculum';
+  else if (state.tab === 'flashcards') path = '/flashcards';
+  else if (state.tab === 'quizzes') path = '/quizzes';
+  else if (state.tab === 'library') path = '/library';
+  else if (state.tab === 'labs') {
+    path = state.scenarioId ? `/labs/${encodeURIComponent(state.scenarioId)}` : '/labs';
+  }
+
+  const query = new URLSearchParams();
+  if (state.lessonId) query.set('lesson', state.lessonId);
+  if (state.genLessonId) query.set('genLesson', state.genLessonId);
+  if (state.deckId) query.set('deckId', state.deckId);
+  if (state.quizId) query.set('quizId', state.quizId);
+  if (state.attemptId) query.set('attemptId', state.attemptId);
+
+  const qs = query.toString();
+  return qs ? `${path}?${qs}` : path;
+}
 
 function Dashboard() {
   const { logout, isDemoMode, exitDemoMode, user, sessionExpiresAt } = useAuth();
@@ -97,54 +191,54 @@ function Dashboard() {
     openTutor,
     closeTutor,
   } = useAiTutor();
-  const [mainTab, setMainTab] = useState<TabId>(() => {
+
+  // Initialize route state from current window location
+  const initialRoute = useMemo(() => {
     if (typeof window !== 'undefined') {
-      const t = new URLSearchParams(window.location.search).get('tab');
-      if (t === 'dashboard' || t === 'flashcards' || t === 'quizzes' || t === 'labs' || t === 'curriculum' || t === 'library') {
-        return t as TabId;
-      }
+      return parseAppRoute(window.location.pathname, window.location.search);
     }
-    return 'dashboard';
-  });
-  const [activeLessonId, setActiveLessonId] = useState<string | null>(() => {
-    if (typeof window !== 'undefined') {
-      return new URLSearchParams(window.location.search).get('lesson');
-    }
-    return null;
-  });
-  const [selectedGeneratedLessonId, setSelectedGeneratedLessonId] = useState<string | null>(() => {
-    if (typeof window !== 'undefined') {
-      return new URLSearchParams(window.location.search).get('genLesson');
-    }
-    return null;
-  });
-  const [studyingDeckId, setStudyingDeckId] = useState<string | null>(() => {
-    if (typeof window !== 'undefined') {
-      return new URLSearchParams(window.location.search).get('deckId');
-    }
-    return null;
-  });
-  const [activeQuizId, setActiveQuizId] = useState<string | null>(() => {
-    if (typeof window !== 'undefined') {
-      return new URLSearchParams(window.location.search).get('quizId');
-    }
-    return null;
-  });
-  const [activeAttemptId, setActiveAttemptId] = useState<string | null>(() => {
-    if (typeof window !== 'undefined') {
-      return new URLSearchParams(window.location.search).get('attemptId');
-    }
-    return null;
-  });
-  const [targetLabScenarioId, setTargetLabScenarioId] = useState<string | null>(() => {
-    if (typeof window !== 'undefined') {
-      return new URLSearchParams(window.location.search).get('scenario');
-    }
-    return null;
-  });
+    return {
+      tab: 'dashboard' as TabId,
+      scenarioId: null,
+      lessonId: null,
+      genLessonId: null,
+      deckId: null,
+      quizId: null,
+      attemptId: null,
+      isLegacyRedirect: false,
+    };
+  }, []);
+
+  const [mainTab, setMainTab] = useState<TabId>(initialRoute.tab);
+  const [activeLessonId, setActiveLessonId] = useState<string | null>(initialRoute.lessonId);
+  const [selectedGeneratedLessonId, setSelectedGeneratedLessonId] = useState<string | null>(initialRoute.genLessonId);
+  const [studyingDeckId, setStudyingDeckId] = useState<string | null>(initialRoute.deckId);
+  const [activeQuizId, setActiveQuizId] = useState<string | null>(initialRoute.quizId);
+  const [activeAttemptId, setActiveAttemptId] = useState<string | null>(initialRoute.attemptId);
+  const [targetLabScenarioId, setTargetLabScenarioId] = useState<string | null>(initialRoute.scenarioId);
   const [activeAttemptData, setActiveAttemptData] = useState<GradedQuizAttemptResponse | null>(null);
   const [selectedGeneratedLesson, setSelectedGeneratedLesson] = useState<GeneratedLessonDetail | null>(null);
   const [isLoadingGenLesson, setIsLoadingGenLesson] = useState(false);
+
+  // Normalize legacy query URLs (?tab=labs&scenario=...) to clean paths (/labs/...)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const current = parseAppRoute(window.location.pathname, window.location.search);
+      if (current.isLegacyRedirect) {
+        const cleanUrl = buildAppUrl({
+          tab: current.tab,
+          scenarioId: current.scenarioId,
+          lessonId: current.lessonId,
+          genLessonId: current.genLessonId,
+          deckId: current.deckId,
+          quizId: current.quizId,
+          attemptId: current.attemptId,
+        });
+        window.history.replaceState({}, '', cleanUrl);
+      }
+    }
+  }, []);
+
 
   // Lesson Generator Modal state
   const [isCreateLessonModalOpen, setIsCreateLessonModalOpen] = useState(false);
@@ -209,25 +303,14 @@ function Dashboard() {
   useEffect(() => {
     const handlePopState = () => {
       if (typeof window !== 'undefined') {
-        const params = new URLSearchParams(window.location.search);
-        const tab = params.get('tab');
-        if (tab === 'dashboard' || tab === 'flashcards' || tab === 'quizzes' || tab === 'labs' || tab === 'curriculum' || tab === 'library') {
-          setMainTab(tab as TabId);
-        } else if (!tab) {
-          setMainTab('dashboard');
-        }
-        const lesson = params.get('lesson');
-        setActiveLessonId(lesson);
-        const genLesson = params.get('genLesson');
-        setSelectedGeneratedLessonId(genLesson);
-        const deck = params.get('deckId');
-        setStudyingDeckId(deck);
-        const qId = params.get('quizId');
-        setActiveQuizId(qId);
-        const aId = params.get('attemptId');
-        setActiveAttemptId(aId);
-        const scenario = params.get('scenario');
-        setTargetLabScenarioId(scenario);
+        const state = parseAppRoute(window.location.pathname, window.location.search);
+        setMainTab(state.tab);
+        setActiveLessonId(state.lessonId);
+        setSelectedGeneratedLessonId(state.genLessonId);
+        setStudyingDeckId(state.deckId);
+        setActiveQuizId(state.quizId);
+        setActiveAttemptId(state.attemptId);
+        setTargetLabScenarioId(state.scenarioId);
       }
     };
 
@@ -265,10 +348,8 @@ function Dashboard() {
     setSelectedGeneratedLessonId(id);
     setMainTab('library');
     if (typeof window !== 'undefined') {
-      const url = new URL(window.location.href);
-      url.searchParams.set('tab', 'library');
-      url.searchParams.set('genLesson', id);
-      window.history.pushState({ genLesson: id }, '', url.toString());
+      const nextUrl = buildAppUrl({ tab: 'library', genLessonId: id });
+      window.history.pushState({ genLesson: id }, '', nextUrl);
       window.scrollTo({ top: 0, behavior: 'instant' });
     }
   };
@@ -277,9 +358,8 @@ function Dashboard() {
     setSelectedGeneratedLessonId(null);
     setSelectedGeneratedLesson(null);
     if (typeof window !== 'undefined') {
-      const url = new URL(window.location.href);
-      url.searchParams.delete('genLesson');
-      window.history.pushState({}, '', url.toString());
+      const nextUrl = buildAppUrl({ tab: 'library' });
+      window.history.pushState({}, '', nextUrl);
       window.scrollTo({ top: 0, behavior: 'instant' });
     }
   };
@@ -303,10 +383,8 @@ function Dashboard() {
     setActiveLessonId(lessonId);
     setMainTab('curriculum');
     if (typeof window !== 'undefined') {
-      const url = new URL(window.location.href);
-      url.searchParams.set('tab', 'curriculum');
-      url.searchParams.set('lesson', lessonId);
-      window.history.pushState({ lessonId }, '', url.toString());
+      const nextUrl = buildAppUrl({ tab: 'curriculum', lessonId });
+      window.history.pushState({ lessonId }, '', nextUrl);
       window.scrollTo({ top: 0, behavior: 'instant' });
     }
   };
@@ -314,9 +392,8 @@ function Dashboard() {
   const handleBackToCurriculum = () => {
     setActiveLessonId(null);
     if (typeof window !== 'undefined') {
-      const url = new URL(window.location.href);
-      url.searchParams.delete('lesson');
-      window.history.pushState({}, '', url.toString());
+      const nextUrl = buildAppUrl({ tab: 'curriculum' });
+      window.history.pushState({}, '', nextUrl);
       window.scrollTo({ top: 0, behavior: 'instant' });
     }
   };
@@ -333,21 +410,16 @@ function Dashboard() {
       setTargetLabScenarioId(null);
     }
     if (typeof window !== 'undefined') {
-      const url = new URL(window.location.href);
-      url.searchParams.set('tab', newTab);
-      url.searchParams.delete('lesson');
-      url.searchParams.delete('genLesson');
-      url.searchParams.delete('deckId');
-      url.searchParams.delete('quizId');
-      url.searchParams.delete('attemptId');
-      if (newTab !== 'labs') {
-        url.searchParams.delete('scenario');
-      }
-      window.history.pushState({}, '', url.toString());
+      const nextUrl = buildAppUrl({
+        tab: newTab,
+        scenarioId: newTab === 'labs' ? targetLabScenarioId : null,
+      });
+      window.history.pushState({}, '', nextUrl);
     }
   };
 
   const handleNavigateToLabs = (scenarioOrLabId?: string) => {
+    const scenarioId = scenarioOrLabId || targetLabScenarioId || null;
     if (scenarioOrLabId) {
       setTargetLabScenarioId(scenarioOrLabId);
     }
@@ -359,17 +431,8 @@ function Dashboard() {
     setActiveQuizId(null);
     setActiveAttemptId(null);
     if (typeof window !== 'undefined') {
-      const url = new URL(window.location.href);
-      url.searchParams.set('tab', 'labs');
-      url.searchParams.delete('lesson');
-      url.searchParams.delete('genLesson');
-      url.searchParams.delete('deckId');
-      url.searchParams.delete('quizId');
-      url.searchParams.delete('attemptId');
-      if (scenarioOrLabId) {
-        url.searchParams.set('scenario', scenarioOrLabId);
-      }
-      window.history.pushState({}, '', url.toString());
+      const nextUrl = buildAppUrl({ tab: 'labs', scenarioId });
+      window.history.pushState({}, '', nextUrl);
     }
   };
 
@@ -379,11 +442,8 @@ function Dashboard() {
     setActiveAttemptData(null);
     setMainTab('quizzes');
     if (typeof window !== 'undefined') {
-      const url = new URL(window.location.href);
-      url.searchParams.set('tab', 'quizzes');
-      url.searchParams.set('quizId', quizId);
-      url.searchParams.delete('attemptId');
-      window.history.pushState({ quizId }, '', url.toString());
+      const nextUrl = buildAppUrl({ tab: 'quizzes', quizId });
+      window.history.pushState({ quizId }, '', nextUrl);
       window.scrollTo({ top: 0, behavior: 'instant' });
     }
   };
@@ -394,11 +454,8 @@ function Dashboard() {
     setActiveQuizId(null);
     setMainTab('quizzes');
     if (typeof window !== 'undefined') {
-      const url = new URL(window.location.href);
-      url.searchParams.set('tab', 'quizzes');
-      url.searchParams.set('attemptId', attemptId);
-      url.searchParams.delete('quizId');
-      window.history.pushState({ attemptId }, '', url.toString());
+      const nextUrl = buildAppUrl({ tab: 'quizzes', attemptId });
+      window.history.pushState({ attemptId }, '', nextUrl);
       window.scrollTo({ top: 0, behavior: 'instant' });
     }
   };
@@ -408,10 +465,8 @@ function Dashboard() {
     setActiveAttemptId(null);
     setActiveAttemptData(null);
     if (typeof window !== 'undefined') {
-      const url = new URL(window.location.href);
-      url.searchParams.delete('quizId');
-      url.searchParams.delete('attemptId');
-      window.history.pushState({}, '', url.toString());
+      const nextUrl = buildAppUrl({ tab: 'quizzes' });
+      window.history.pushState({}, '', nextUrl);
     }
   };
 
@@ -423,14 +478,8 @@ function Dashboard() {
     setActiveQuizId(null);
     setActiveAttemptId(null);
     if (typeof window !== 'undefined') {
-      const url = new URL(window.location.href);
-      url.searchParams.set('tab', 'flashcards');
-      url.searchParams.set('deckId', deckId);
-      url.searchParams.delete('genLesson');
-      url.searchParams.delete('lesson');
-      url.searchParams.delete('quizId');
-      url.searchParams.delete('attemptId');
-      window.history.pushState({ deckId }, '', url.toString());
+      const nextUrl = buildAppUrl({ tab: 'flashcards', deckId });
+      window.history.pushState({ deckId }, '', nextUrl);
       window.scrollTo({ top: 0, behavior: 'instant' });
     }
   };

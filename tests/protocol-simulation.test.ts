@@ -9,7 +9,14 @@ import {
 import {
   computeAccumulatedTopology,
   applySingleMutation,
+  extractBaseHostname,
+  formatCliPrompt,
+  evaluateCliNavigation,
 } from '../src/hooks/useProtocolSimulation.ts';
+import {
+  parseAppRoute,
+  buildAppUrl,
+} from '../src/App.tsx';
 import type {
   ProtocolSimulationScenario,
   TopologyNode,
@@ -968,6 +975,162 @@ async function runProtocolSimulationTests() {
 
   await simulationsApi.deleteSavedSimulation('vlan-trunking-roas', { isDemoMode: true });
   assert(getLocalSavedSimulations().length === 0, 'Custom simulation removed from local storage fallback');
+
+  // =========================================================================
+  // SECTION 9: Phase J — Authentic Cisco IOS Mode Hierarchy & Path-Based SPA Routing
+  // =========================================================================
+  console.log('\n--- Section 9: Authentic Cisco IOS Mode Hierarchy & Path-Based SPA Routing ---');
+
+  // 9.1 Base Hostname Extraction
+  console.log('   Testing Base Hostname Extraction from Scenarios:');
+  assert(extractBaseHostname('R1-Edge#') === 'R1-Edge', 'extractBaseHostname removes trailing #');
+  assert(extractBaseHostname('SW-1#') === 'SW-1', 'extractBaseHostname handles switch hostnames');
+  assert(extractBaseHostname('Router>') === 'Router', 'extractBaseHostname strips > prompt char');
+  assert(extractBaseHostname('') === 'Router', 'extractBaseHostname defaults empty string to Router');
+  assert(extractBaseHostname('Host-A# ') === 'Host-A', 'extractBaseHostname trims surrounding whitespace');
+
+  // 9.2 Dynamic Cisco Prompt Formatting
+  console.log('   Testing Dynamic Cisco Prompt Formatting:');
+  assert(formatCliPrompt('R1-Edge#', 'privileged') === 'R1-Edge#', 'formatCliPrompt privileged EXEC prompt');
+  assert(formatCliPrompt('R1-Edge#', 'config') === 'R1-Edge(config)#', 'formatCliPrompt global config prompt');
+  assert(
+    formatCliPrompt('R1-Edge#', 'config-sub', 'config-if') === 'R1-Edge(config-if)#',
+    'formatCliPrompt interface sub-mode prompt'
+  );
+  assert(
+    formatCliPrompt('R1-Edge#', 'config-sub', 'config-router') === 'R1-Edge(config-router)#',
+    'formatCliPrompt router sub-mode prompt'
+  );
+
+  // 9.3 Cisco IOS Mode Navigation Transitions
+  console.log('   Testing Cisco IOS Mode Hierarchy Navigation Transitions:');
+  
+  // Privileged -> configure terminal -> Global Config
+  const toConfig = evaluateCliNavigation('configure terminal', 'privileged');
+  assert(toConfig !== null && toConfig.nextMode === 'config', 'configure terminal transitions to config mode');
+  assert(Boolean(toConfig?.output.includes('CNTL/Z')), 'conf t outputs standard Cisco configuration banner');
+
+  // conf t abbreviation
+  const confTAbbr = evaluateCliNavigation('conf t', 'privileged');
+  assert(confTAbbr !== null && confTAbbr.nextMode === 'config', 'conf t abbreviation transitions to config mode');
+
+  // Already in config mode warning
+  const confTInConfig = evaluateCliNavigation('conf t', 'config');
+  assert(
+    confTInConfig !== null && confTInConfig.output.includes('Already in configuration mode'),
+    'conf t while in config warns user already in configuration mode'
+  );
+
+  // Global Config -> interface Gi0/0 -> Interface Sub-Mode
+  const toIfMode = evaluateCliNavigation('interface GigabitEthernet0/0', 'config');
+  assert(toIfMode !== null && toIfMode.nextMode === 'config-sub', 'interface command enters config-sub mode');
+  assert(toIfMode?.nextSubModeLabel === 'config-if', 'interface command sets sub-mode label to config-if');
+
+  const toIfAbbr = evaluateCliNavigation('int Gi0/1', 'config');
+  assert(toIfAbbr !== null && toIfAbbr.nextSubModeLabel === 'config-if', 'int shorthand enters config-if');
+
+  // Global Config -> router ospf 1 -> Router Sub-Mode
+  const toRouterMode = evaluateCliNavigation('router ospf 1', 'config');
+  assert(toRouterMode !== null && toRouterMode.nextMode === 'config-sub', 'router ospf command enters config-sub mode');
+  assert(toRouterMode?.nextSubModeLabel === 'config-router', 'router command sets sub-mode label to config-router');
+
+  const toBgpMode = evaluateCliNavigation('router bgp 65000', 'config');
+  assert(toBgpMode !== null && toBgpMode.nextSubModeLabel === 'config-router', 'router bgp enters config-router');
+
+  // Sub-mode -> exit -> Global Config
+  const exitFromSub = evaluateCliNavigation('exit', 'config-sub', 'config-if');
+  assert(exitFromSub !== null && exitFromSub.nextMode === 'config', 'exit from sub-mode steps back to global config');
+
+  // Global Config -> exit -> Privileged EXEC
+  const exitFromConfig = evaluateCliNavigation('exit', 'config');
+  assert(
+    exitFromConfig !== null && exitFromConfig.nextMode === 'privileged',
+    'exit from config steps back to privileged EXEC'
+  );
+  assert(Boolean(exitFromConfig?.output.includes('SYS-5-CONFIG_I')), 'exit from config prints SYS-5 syslog message');
+
+  // Privileged EXEC -> exit -> stay in Privileged EXEC
+  const exitFromPriv = evaluateCliNavigation('exit', 'privileged');
+  assert(
+    exitFromPriv !== null && exitFromPriv.nextMode === 'privileged',
+    'exit from privileged EXEC prevents session drop'
+  );
+  assert(Boolean(exitFromPriv?.output.includes('Cannot exit top-level')), 'exit at top-level outputs warning');
+
+  // Sub-mode -> end -> Privileged EXEC (Direct drop)
+  const endFromSub = evaluateCliNavigation('end', 'config-sub', 'config-router');
+  assert(endFromSub !== null && endFromSub.nextMode === 'privileged', 'end from sub-mode drops directly to privileged EXEC');
+  assert(Boolean(endFromSub?.output.includes('SYS-5-CONFIG_I')), 'end prints configuration syslog confirmation');
+
+  // Non-navigation command returns null
+  assert(evaluateCliNavigation('show ip route', 'privileged') === null, 'Diagnostic show commands return null for navigation');
+  assert(evaluateCliNavigation('do show ip route', 'config') === null, 'do commands return null for navigation');
+
+  // 9.4 Clean Path-Based SPA Route Parsing
+  console.log('   Testing Clean Path-Based SPA Route Parsing:');
+  const dashRoute = parseAppRoute('/', '');
+  assert(dashRoute.tab === 'dashboard' && dashRoute.scenarioId === null, 'Root path / maps to dashboard');
+  assert(!dashRoute.isLegacyRedirect, 'Root path is not flagged as legacy redirect');
+
+  const dashExplicitRoute = parseAppRoute('/dashboard', '');
+  assert(dashExplicitRoute.tab === 'dashboard', '/dashboard maps to dashboard tab');
+
+  const currRoute = parseAppRoute('/curriculum', '');
+  assert(currRoute.tab === 'curriculum', '/curriculum maps to curriculum tab');
+
+  const labsRoute = parseAppRoute('/labs', '');
+  assert(labsRoute.tab === 'labs' && labsRoute.scenarioId === null, '/labs maps to labs tab without scenarioId');
+
+  const labsScenarioRoute = parseAppRoute('/labs/bgp-best-path-selection', '');
+  assert(
+    labsScenarioRoute.tab === 'labs' && labsScenarioRoute.scenarioId === 'bgp-best-path-selection',
+    '/labs/:scenarioId maps to labs with parsed scenarioId'
+  );
+
+  const libraryRoute = parseAppRoute('/library', '');
+  assert(libraryRoute.tab === 'library', '/library maps to library tab');
+
+  const flashcardsRoute = parseAppRoute('/flashcards', '');
+  assert(flashcardsRoute.tab === 'flashcards', '/flashcards maps to flashcards tab');
+
+  const quizzesRoute = parseAppRoute('/quizzes', '');
+  assert(quizzesRoute.tab === 'quizzes', '/quizzes maps to quizzes tab');
+
+  // Trailing slash tolerance
+  const trailingSlashRoute = parseAppRoute('/curriculum/', '');
+  assert(trailingSlashRoute.tab === 'curriculum', 'Trailing slashes are tolerated cleanly');
+
+  // 9.5 Legacy Query String URL Normalization
+  console.log('   Testing Legacy Query URL Normalization:');
+  const legacyLabsRoute = parseAppRoute('/', '?tab=labs&scenario=ospf-adjacency-mtu');
+  assert(legacyLabsRoute.tab === 'labs', 'Legacy ?tab=labs parsed correctly');
+  assert(legacyLabsRoute.scenarioId === 'ospf-adjacency-mtu', 'Legacy ?scenario= parsed correctly');
+  assert(legacyLabsRoute.isLegacyRedirect === true, 'Legacy URL flagged with isLegacyRedirect: true');
+
+  const legacyLessonRoute = parseAppRoute('/', '?tab=curriculum&lesson=bgp-intro');
+  assert(legacyLessonRoute.tab === 'curriculum', 'Legacy ?tab=curriculum parsed correctly');
+  assert(legacyLessonRoute.lessonId === 'bgp-intro', 'Legacy ?lesson= parsed correctly');
+  assert(legacyLessonRoute.isLegacyRedirect === true, 'Legacy lesson URL flagged with isLegacyRedirect: true');
+
+  // 9.6 Path-Based SPA URL Builder
+  console.log('   Testing Path-Based SPA URL Builder:');
+  assert(buildAppUrl({ tab: 'dashboard' }) === '/', 'buildAppUrl dashboard returns /');
+  assert(buildAppUrl({ tab: 'curriculum' }) === '/curriculum', 'buildAppUrl curriculum returns /curriculum');
+  assert(buildAppUrl({ tab: 'labs' }) === '/labs', 'buildAppUrl labs without scenario returns /labs');
+  assert(
+    buildAppUrl({ tab: 'labs', scenarioId: 'bgp-best-path-selection' }) === '/labs/bgp-best-path-selection',
+    'buildAppUrl labs with scenario returns /labs/:scenarioId'
+  );
+  assert(buildAppUrl({ tab: 'library' }) === '/library', 'buildAppUrl library returns /library');
+  assert(buildAppUrl({ tab: 'quizzes' }) === '/quizzes', 'buildAppUrl quizzes returns /quizzes');
+  assert(
+    buildAppUrl({ tab: 'flashcards', deckId: 'ccna-deck-1' }) === '/flashcards?deckId=ccna-deck-1',
+    'buildAppUrl preserves query params like deckId'
+  );
+  assert(
+    buildAppUrl({ tab: 'curriculum', lessonId: 'bgp-overview' }) === '/curriculum?lesson=bgp-overview',
+    'buildAppUrl preserves lessonId in query params'
+  );
 
 
   console.log('\n=============================================================');

@@ -55,6 +55,9 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
     progressPercentage,
     cliHistory,
     promptHostname,
+    activePrompt,
+    cliMode,
+    cliSubModeLabel,
     isObjectiveSolved,
     executeCliCommand,
     resetCli,
@@ -146,10 +149,11 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
       setScenario(fallback);
       setSelectedNodeId(fallback.topology.nodes[0]?.id || 'host-client');
       if (typeof window !== 'undefined') {
-        const url = new URL(window.location.href);
-        if (url.searchParams.get('tab') === 'labs') {
-          url.searchParams.set('scenario', fallback.metadata.id);
-          window.history.replaceState({}, '', url.toString());
+        const isLabsRoute =
+          window.location.pathname.startsWith('/labs') ||
+          new URLSearchParams(window.location.search).get('tab') === 'labs';
+        if (isLabsRoute) {
+          window.history.replaceState({}, '', `/labs/${encodeURIComponent(fallback.metadata.id)}`);
         }
       }
     } catch (err) {
@@ -206,10 +210,11 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
                     setScenario(nextScenario);
                     setSelectedNodeId(nextScenario.topology.nodes[0]?.id || 'host-client');
                     if (typeof window !== 'undefined') {
-                      const url = new URL(window.location.href);
-                      if (url.searchParams.get('tab') === 'labs') {
-                        url.searchParams.set('scenario', nextId);
-                        window.history.replaceState({}, '', url.toString());
+                      const isLabsRoute =
+                        window.location.pathname.startsWith('/labs') ||
+                        new URLSearchParams(window.location.search).get('tab') === 'labs';
+                      if (isLabsRoute) {
+                        window.history.replaceState({}, '', `/labs/${encodeURIComponent(nextId)}`);
                       }
                     }
                   }
@@ -312,6 +317,9 @@ export const ProtocolExplorerView: React.FC<ProtocolExplorerViewProps> = ({
         cliConfig={scenario.cliConfig}
         cliHistory={cliHistory}
         promptHostname={promptHostname}
+        activePrompt={activePrompt}
+        cliMode={cliMode}
+        cliSubModeLabel={cliSubModeLabel}
         isObjectiveSolved={isObjectiveSolved}
         onExecuteCommand={executeCliCommand}
         onResetCli={resetCli}

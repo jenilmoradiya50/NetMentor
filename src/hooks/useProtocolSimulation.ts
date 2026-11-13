@@ -17,6 +17,129 @@ export interface CliLogEntry {
   text: string;
 }
 
+export type CliMode = 'privileged' | 'config' | 'config-sub';
+
+export function extractBaseHostname(rawPrompt: string): string {
+  return rawPrompt.trim().replace(/[#>]+$/, '').trim() || 'Router';
+}
+
+export function formatCliPrompt(baseHostname: string, mode: CliMode, subModeLabel = 'config-if'): string {
+  const cleanHost = extractBaseHostname(baseHostname);
+  if (mode === 'config') {
+    return `${cleanHost}(config)#`;
+  }
+  if (mode === 'config-sub') {
+    return `${cleanHost}(${subModeLabel})#`;
+  }
+  return `${cleanHost}#`;
+}
+
+export interface CliTransitionResult {
+  nextMode: CliMode;
+  nextSubModeLabel: string;
+  output: string;
+  isNavigation: boolean;
+}
+
+export function evaluateCliNavigation(
+  rawInput: string,
+  currentMode: CliMode,
+  currentSubModeLabel = 'config-if'
+): CliTransitionResult | null {
+  const normalized = rawInput.trim().toLowerCase().replace(/\s+/g, ' ');
+
+  // 1.1 Global Configuration mode
+  if (
+    normalized === 'configure terminal' ||
+    normalized === 'conf t' ||
+    normalized === 'config t' ||
+    normalized === 'configure'
+  ) {
+    if (currentMode === 'config' || currentMode === 'config-sub') {
+      return {
+        nextMode: currentMode,
+        nextSubModeLabel: currentSubModeLabel,
+        output: '% Already in configuration mode.',
+        isNavigation: true,
+      };
+    }
+    return {
+      nextMode: 'config',
+      nextSubModeLabel: currentSubModeLabel,
+      output: 'Enter configuration commands, one per line.  End with CNTL/Z.',
+      isNavigation: true,
+    };
+  }
+
+  // 1.2 Interface Configuration Sub-mode
+  const ifMatch = normalized.match(/^(?:interface|int)\s+([a-zA-Z0-9/._-]+)$/);
+  if (ifMatch) {
+    return {
+      nextMode: 'config-sub',
+      nextSubModeLabel: 'config-if',
+      output: '',
+      isNavigation: true,
+    };
+  }
+
+  // 1.3 Routing Protocol Configuration Sub-mode
+  const routerMatch = normalized.match(/^router\s+([a-zA-Z0-9_-]+)(?:\s+([a-zA-Z0-9._-]+))?$/);
+  if (routerMatch) {
+    return {
+      nextMode: 'config-sub',
+      nextSubModeLabel: 'config-router',
+      output: '',
+      isNavigation: true,
+    };
+  }
+
+  // 1.4 Exit
+  if (normalized === 'exit' || normalized === 'quit') {
+    if (currentMode === 'config-sub') {
+      return {
+        nextMode: 'config',
+        nextSubModeLabel: currentSubModeLabel,
+        output: '',
+        isNavigation: true,
+      };
+    }
+    if (currentMode === 'config') {
+      return {
+        nextMode: 'privileged',
+        nextSubModeLabel: currentSubModeLabel,
+        output: '% SYS-5-CONFIG_I: Configured from console by console',
+        isNavigation: true,
+      };
+    }
+    return {
+      nextMode: 'privileged',
+      nextSubModeLabel: currentSubModeLabel,
+      output: '% Cannot exit top-level privileged EXEC mode. Session remains active.',
+      isNavigation: true,
+    };
+  }
+
+  // 1.5 End / Disable
+  if (normalized === 'end' || normalized === 'disable') {
+    if (currentMode !== 'privileged') {
+      return {
+        nextMode: 'privileged',
+        nextSubModeLabel: currentSubModeLabel,
+        output: '% SYS-5-CONFIG_I: Configured from console by console',
+        isNavigation: true,
+      };
+    }
+    return {
+      nextMode: 'privileged',
+      nextSubModeLabel: currentSubModeLabel,
+      output: '',
+      isNavigation: true,
+    };
+  }
+
+  return null;
+}
+
 export interface UseProtocolSimulationResult {
   // Core state
   scenario: ProtocolSimulationScenario;
@@ -40,10 +163,14 @@ export interface UseProtocolSimulationResult {
   // In-App Bounded CLI State & Actions
   cliHistory: CliLogEntry[];
   promptHostname: string;
+  activePrompt: string;
+  cliMode: CliMode;
+  cliSubModeLabel: string;
   isObjectiveSolved: boolean;
   cliMutations: NodeStateMutation[];
   executeCliCommand: (rawInput: string) => { success: boolean; output: string; goalAchieved?: boolean };
   resetCli: () => void;
+
 
   // Actions
   play: () => void;
@@ -268,14 +395,23 @@ export function useProtocolSimulation(
   const [inspectedLayer, setInspectedLayer] = useState<InspectedLayer>('L4');
   const [activeInspectorTab, setActiveInspectorTab] = useState<InspectorTab>('headers');
 
-  // In-App Bounded CLI State
+  // In-App Bounded CLI State & Authentic Cisco IOS Modes
   const [promptHostname, setPromptHostname] = useState<string>(
     initialScenario.cliConfig?.promptHostname || 'Router#'
   );
+  const [cliMode, setCliMode] = useState<CliMode>('privileged');
+  const [cliSubModeLabel, setCliSubModeLabel] = useState<string>('config-if');
   const [cliMutations, setCliMutations] = useState<NodeStateMutation[]>([]);
   const [isObjectiveSolved, setIsObjectiveSolved] = useState<boolean>(false);
   const [cliHistory, setCliHistory] = useState<CliLogEntry[]>(() =>
     createInitialCliHistory(initialScenario)
+  );
+
+  const baseHostname = useMemo(() => extractBaseHostname(promptHostname), [promptHostname]);
+
+  const activePrompt = useMemo(
+    () => formatCliPrompt(baseHostname, cliMode, cliSubModeLabel),
+    [baseHostname, cliMode, cliSubModeLabel]
   );
 
   // Sync state if scenario changes externally
@@ -284,6 +420,8 @@ export function useProtocolSimulation(
     setCurrentStepIndex(0);
     setIsPlaying(false);
     setPromptHostname(initialScenario.cliConfig?.promptHostname || 'Router#');
+    setCliMode('privileged');
+    setCliSubModeLabel('config-if');
     setCliMutations([]);
     setIsObjectiveSolved(false);
     setCliHistory(createInitialCliHistory(initialScenario));
@@ -403,9 +541,11 @@ export function useProtocolSimulation(
   }, []);
 
   const resetCli = useCallback(() => {
+    setPromptHostname(scenario.cliConfig?.promptHostname || 'Router#');
+    setCliMode('privileged');
+    setCliSubModeLabel('config-if');
     setCliMutations([]);
     setIsObjectiveSolved(false);
-    setPromptHostname(scenario.cliConfig?.promptHostname || 'Router#');
     setCliHistory(createInitialCliHistory(scenario));
   }, [scenario]);
 
@@ -419,25 +559,51 @@ export function useProtocolSimulation(
       const inputEntry: CliLogEntry = {
         id: `cli-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         type: 'input',
-        text: `${promptHostname} ${trimmed}`,
+        text: `${activePrompt} ${trimmed}`,
       };
 
       const normalized = trimmed.toLowerCase().replace(/\s+/g, ' ');
 
-      // 1. Check for help / ?
+      // 1. Navigation Commands (Cisco IOS Prompt Hierarchy)
+      const navResult = evaluateCliNavigation(trimmed, cliMode, cliSubModeLabel);
+      if (navResult) {
+        setCliMode(navResult.nextMode);
+        setCliSubModeLabel(navResult.nextSubModeLabel);
+        const outEntries: CliLogEntry[] = [inputEntry];
+        if (navResult.output) {
+          outEntries.push({
+            id: `cli-out-${Date.now()}`,
+            type: 'output',
+            text: navResult.output,
+          });
+        }
+        setCliHistory((prev) => [...prev, ...outEntries]);
+        return { success: true, output: navResult.output };
+      }
+
+      // 2. Help / ?
       if (normalized === '?' || normalized === 'help') {
+        let navGuide = '';
+        if (cliMode === 'privileged') {
+          navGuide = `Privileged EXEC Commands:\n  configure terminal (conf t)        - Enter global configuration mode`;
+        } else if (cliMode === 'config') {
+          navGuide = `Global Configuration Commands:\n  interface <name> (int <name>)      - Enter interface configuration sub-mode\n  router <ospf|bgp> <id>             - Enter router configuration sub-mode\n  exit                               - Return to privileged EXEC mode\n  end                                - Exit configuration mode to EXEC`;
+        } else {
+          navGuide = `Sub-Mode Configuration Commands:\n  exit                               - Return to global configuration mode\n  end                                - Return to privileged EXEC mode`;
+        }
+
         const allowed = scenario.cliConfig?.allowedCommands || [];
         const cmdList =
           allowed.length > 0
             ? allowed
                 .map(
                   (c) =>
-                    `  ${c.command.padEnd(35)} - ${c.description || 'Inspection/Action command'}`
+                    `  ${c.command.padEnd(35)} - ${c.description || 'Diagnostic/Action command'}`
                 )
                 .join('\n')
             : '  (No bounded commands registered for this scenario)';
 
-        const helpText = `Available ${scenario.cliConfig?.protocolScope || 'Protocol'} Commands:\n${cmdList}\n\nType 'help' or '?' anytime. Commands are case-insensitive and support standard abbreviations.`;
+        const helpText = `${navGuide}\n\nScenario Commands (${scenario.cliConfig?.protocolScope || 'Protocol'}):\n${cmdList}\n\nNote: Cisco IOS commands are case-insensitive and support standard abbreviations.`;
 
         const outEntry: CliLogEntry = {
           id: `cli-out-${Date.now()}`,
@@ -449,14 +615,19 @@ export function useProtocolSimulation(
         return { success: true, output: helpText };
       }
 
-      // 2. Match against scenario's allowedCommands
+      // 3. Match against scenario's allowedCommands (support direct or 'do <cmd>')
+      let targetCmd = normalized;
+      if ((cliMode === 'config' || cliMode === 'config-sub') && targetCmd.startsWith('do ')) {
+        targetCmd = targetCmd.slice(3).trim();
+      }
+
       const allowedCommands = scenario.cliConfig?.allowedCommands || [];
       const match = allowedCommands.find((def) => {
         const canonical = def.command.toLowerCase().trim().replace(/\s+/g, ' ');
-        if (normalized === canonical) return true;
+        if (targetCmd === canonical) return true;
         if (
           def.aliases &&
-          def.aliases.some((a) => a.toLowerCase().trim().replace(/\s+/g, ' ') === normalized)
+          def.aliases.some((a) => a.toLowerCase().trim().replace(/\s+/g, ' ') === targetCmd)
         ) {
           return true;
         }
@@ -493,8 +664,8 @@ export function useProtocolSimulation(
         return { success: true, output: match.output, goalAchieved: match.goalAchieved };
       }
 
-      // 3. Command not recognized
-      const errorMsg = `% Invalid input detected: "${trimmed}"\nType '?' or 'help' to inspect valid topic-bounded commands for ${scenario.cliConfig?.protocolScope || 'this scenario'}.`;
+      // 4. Command not recognized
+      const errorMsg = `% Invalid input detected at '^' marker: "${trimmed}"\nType '?' or 'help' to inspect valid commands for current mode (${cliMode}).`;
       const errEntry: CliLogEntry = {
         id: `cli-err-${Date.now()}`,
         type: 'error',
@@ -504,7 +675,7 @@ export function useProtocolSimulation(
       setCliHistory((prev) => [...prev, inputEntry, errEntry]);
       return { success: false, output: errorMsg };
     },
-    [promptHostname, scenario]
+    [activePrompt, cliMode, scenario]
   );
 
   return {
@@ -522,6 +693,9 @@ export function useProtocolSimulation(
     progressPercentage,
     cliHistory,
     promptHostname,
+    activePrompt,
+    cliMode,
+    cliSubModeLabel,
     isObjectiveSolved,
     cliMutations,
     executeCliCommand,
